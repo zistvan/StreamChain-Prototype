@@ -7,6 +7,8 @@ SPDX-License-Identifier: Apache-2.0
 package kvledger
 
 import (
+	"fmt"
+	"strconv"
 	"sync"
 	"time"
 
@@ -26,6 +28,7 @@ import (
 	"github.com/hyperledger/fabric/core/ledger/pvtdatapolicy"
 	"github.com/hyperledger/fabric/protos/common"
 	"github.com/hyperledger/fabric/protos/peer"
+	"github.com/hyperledger/fabric_org/config"
 	"github.com/pkg/errors"
 )
 
@@ -303,6 +306,12 @@ func (l *kvLedger) CommitWithPvtData(pvtdataAndBlock *ledger.BlockAndPvtData) er
 	if err != nil {
 		return err
 	}
+
+	if config.Log.FullCommit {
+		//fmt.Printf("{\"ts\":" + strconv.FormatInt(time.Now().UnixNano(), 10) + ",\"msg\":\"FABRIC PERF Validation\",\"block\":" + strconv.Itoa(int(blockNo)) + ",\"STEP\":2}\n")
+		fmt.Printf(strconv.FormatInt(time.Now().UnixNano(), 10) + "," + strconv.Itoa(int(blockNo)) + " (Step 2)\n")
+	}
+
 	elapsedBlockProcessing := time.Since(startBlockProcessing)
 
 	startCommitBlockStorage := time.Now()

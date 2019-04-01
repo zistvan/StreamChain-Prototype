@@ -10,6 +10,7 @@ import (
 	"bytes"
 	"encoding/hex"
 	"fmt"
+	"strconv"
 	"time"
 
 	"github.com/golang/protobuf/proto"
@@ -29,6 +30,7 @@ import (
 	"github.com/hyperledger/fabric/protos/peer"
 	transientstore2 "github.com/hyperledger/fabric/protos/transientstore"
 	"github.com/hyperledger/fabric/protos/utils"
+	"github.com/hyperledger/fabric_org/config"
 	"github.com/pkg/errors"
 	"github.com/spf13/viper"
 )
@@ -153,6 +155,38 @@ func (c *coordinator) VerifyBlock(block *common.Block, privateDataSets util.PvtD
 
 	logger.Infof("[%s] Received block [%d] from buffer", c.ChainID, block.Header.Number)
 
+	if config.Log.FullCommit {
+		//fmt.Printf("{\"ts\":" + strconv.FormatInt(time.Now().UnixNano(), 10) + ",\"msg\":\"FABRIC PERF Validation\",\"block\":" + strconv.Itoa(int(block.Header.Number)) + ",\"STEP\":0}\n")
+		fmt.Printf(strconv.FormatInt(time.Now().UnixNano(), 10) + "," + strconv.Itoa(int(block.Header.Number)) + " (Step 0)\n")
+	}
+
+	if config.Log.Validation {
+		/*
+			txcount := -1
+
+			if block != nil && block.Metadata != nil && block.Metadata.Metadata != nil && block.Data != nil && block.Data.Data != nil {
+				txcount = 0
+				txsFilter := ha.TxValidationFlags(block.Metadata.Metadata[common.BlockMetadataIndex_TRANSACTIONS_FILTER])
+
+				if len(txsFilter) == 0 {
+					txsFilter = ha.NewTxValidationFlags(len(block.Data.Data))
+					block.Metadata.Metadata[common.BlockMetadataIndex_TRANSACTIONS_FILTER] = txsFilter
+				}
+
+				for txIndex := range block.Data.Data {
+					if txsFilter.IsInvalid(txIndex) {
+						continue
+					}
+					txcount++
+				}
+			}
+		*/
+		fmt.Println("val0," + strconv.Itoa(int(block.Header.Number)) + "," + strconv.FormatInt(time.Now().UnixNano(), 10))
+
+		//logs.WriteString("{\"ts\":" + strconv.FormatInt(time.Now().UnixNano(), 10) + ",\"msg\":\"FABRIC PERF Validation\",\"block\":" + strconv.Itoa(int(block.Header.Number)) + ",\"transactions\":" + strconv.Itoa(txcount) + ",\"STEP\":0}\n")
+
+	}
+
 	logger.Debugf("[%s] Validating block [%d]", c.ChainID, block.Header.Number)
 	err := c.Validator.Validate(block)
 	if err != nil {
@@ -165,7 +199,10 @@ func (c *coordinator) VerifyBlock(block *common.Block, privateDataSets util.PvtD
 // StoreBlock stores block with private data into the ledger
 func (c *coordinator) StoreBlock(block *common.Block, privateDataSets util.PvtDataCollections) error {
 
-	//logs.WriteString("{\"ts\":" + strconv.FormatInt(time.Now().UnixNano(), 10) + ",\"msg\":\"FABRIC PERF Validation\",\"block\":" + strconv.Itoa(int(block.Header.Number)) + ",\"STEP\":1}\n")
+	if config.Log.FullCommit {
+		//fmt.Printf("{\"ts\":" + strconv.FormatInt(time.Now().UnixNano(), 10) + ",\"msg\":\"FABRIC PERF Validation\",\"block\":" + strconv.Itoa(int(block.Header.Number)) + ",\"STEP\":1}\n")
+		fmt.Printf(strconv.FormatInt(time.Now().UnixNano(), 10) + "," + strconv.Itoa(int(block.Header.Number)) + " (Step 1)\n")
+	}
 
 	blockAndPvtData := &ledger.BlockAndPvtData{
 		Block:          block,

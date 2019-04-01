@@ -27,6 +27,7 @@ import (
 	pb "github.com/hyperledger/fabric/protos/peer"
 	"github.com/hyperledger/fabric/protos/transientstore"
 	putils "github.com/hyperledger/fabric/protos/utils"
+	"github.com/hyperledger/fabric_org/config"
 	"github.com/pkg/errors"
 	"go.uber.org/zap"
 )
@@ -443,6 +444,10 @@ func (e *Endorser) ProcessProposal(ctx context.Context, signedProp *pb.SignedPro
 				"success", strconv.FormatBool(success),
 			}
 			e.Metrics.ProposalDuration.With(meterLabels...).Observe(time.Since(startTime).Seconds())
+		}
+
+		if config.Log.Endorsement {
+			fmt.Printf("%d,%f\n", time.Now().UnixNano()/1000000, time.Since(startTime).Seconds()*1000)
 		}
 
 		endorserLogger.Debug("Exit: request from", addr)

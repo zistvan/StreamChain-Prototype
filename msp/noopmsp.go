@@ -21,7 +21,7 @@ func (m *noopmsp) Setup(conf1 *msp.MSPConfig) error {
 }
 
 func (m *noopmsp) GetVersion() MSPVersion {
-	return MSPv1_0
+	return MSPv1_3
 }
 
 func (m *noopmsp) GetType() ProviderType {
