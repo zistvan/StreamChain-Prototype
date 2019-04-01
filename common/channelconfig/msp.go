@@ -60,6 +60,15 @@ func (bh *MSPConfigHandler) ProposeMSP(mspConfig *mspprotos.MSPConfig) (msp.MSP,
 		if err != nil {
 			return nil, errors.WithMessage(err, "creating the MSP manager failed")
 		}
+
+	case int32(msp.NOOP):
+
+		theMsp, err = msp.New(&msp.NoopNewOpts{NewBaseOpts: msp.NewBaseOpts{Version: bh.version}})
+
+		if err != nil {
+			return nil, errors.WithMessage(err, "creating the MSP manager failed")
+		}
+
 	default:
 		return nil, errors.New(fmt.Sprintf("Setup error: unsupported msp type %d", mspConfig.Type))
 	}

@@ -43,6 +43,10 @@ type IdemixNewOpts struct {
 	NewBaseOpts
 }
 
+type NoopNewOpts struct {
+	NewBaseOpts
+}
+
 // New create a new MSP instance depending on the passed Opts
 func New(opts NewOpts) (MSP, error) {
 	switch opts.(type) {
@@ -66,6 +70,9 @@ func New(opts NewOpts) (MSP, error) {
 		default:
 			return nil, errors.Errorf("Invalid *IdemixNewOpts. Version not recognized [%v]", opts.GetVersion())
 		}
+	case *NoopNewOpts:
+		mspInst, err := newBccspMspRaw(opts.GetVersion())
+		return newNoopMsp(mspInst), err
 	default:
 		return nil, errors.Errorf("Invalid msp.NewOpts instance. It must be either *BCCSPNewOpts or *IdemixNewOpts. It was [%v]", opts)
 	}

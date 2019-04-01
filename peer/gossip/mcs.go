@@ -119,6 +119,13 @@ func (s *MSPMessageCryptoService) VerifyBlock(chainID common.ChainID, seqNum uin
 	}
 
 	blockSeqNum := block.Header.Number
+
+	/*logs.WriteString("{\"ts\":" + strconv.FormatInt(time.Now().UnixNano(), 10) + ",\"msg\":\"FABRIC PERF Validation\",\"block\":" + strconv.Itoa(int(block.Header.Number)) + ",\"transactions\":1" + ",\"STEP\":0}\n")
+	if int(block.Header.Number)%250 == 0 {
+	 fmt.Println(logs.String())
+	 logs.Reset()
+	}*/
+
 	if seqNum != blockSeqNum {
 		return fmt.Errorf("Claimed seqNum is [%d] but actual seqNum inside block is [%d]", seqNum, blockSeqNum)
 	}

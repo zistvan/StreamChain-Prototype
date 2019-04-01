@@ -145,7 +145,7 @@ func GetLocalMSP() msp.MSP {
 
 func loadLocaMSP() msp.MSP {
 	// determine the type of MSP (by default, we'll use bccspMSP)
-	mspType := viper.GetString("peer.localMspType")
+	mspType := viper.GetString("General.LocalMSPType")
 	if mspType == "" {
 		mspType = msp.ProviderTypeToString(msp.FABRIC)
 	}
@@ -171,6 +171,8 @@ func loadLocaMSP() msp.MSP {
 		}
 	case msp.ProviderTypeToString(msp.IDEMIX):
 		// Do nothing
+	case msp.ProviderTypeToString(msp.NOOP):
+		mspInst, err = msp.New(&msp.NoopNewOpts{NewBaseOpts: msp.NewBaseOpts{Version: msp.MSPv1_0}})
 	default:
 		panic("msp type " + mspType + " unknown")
 	}

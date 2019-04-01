@@ -77,6 +77,8 @@ type Coordinator interface {
 	// returns missing transaction ids
 	StoreBlock(block *common.Block, data util.PvtDataCollections) error
 
+	VerifyBlock(block *common.Block, data util.PvtDataCollections) (*common.Block, error)
+
 	// StorePvtData used to persist private data into transient store
 	StorePvtData(txid string, privData *transientstore2.TxPvtReadWriteSetWithConfigInfo, blckHeight uint64) error
 
@@ -141,13 +143,12 @@ func (c *coordinator) StorePvtData(txID string, privData *transientstore2.TxPvtR
 	return c.TransientStore.PersistWithConfig(txID, blkHeight, privData)
 }
 
-// StoreBlock stores block with private data into the ledger
-func (c *coordinator) StoreBlock(block *common.Block, privateDataSets util.PvtDataCollections) error {
+func (c *coordinator) VerifyBlock(block *common.Block, privateDataSets util.PvtDataCollections) (*common.Block, error) {
 	if block.Data == nil {
-		return errors.New("Block data is empty")
+		return block, errors.New("Block data is empty")
 	}
 	if block.Header == nil {
-		return errors.New("Block header is nil")
+		return block, errors.New("Block data is empty")
 	}
 
 	logger.Infof("[%s] Received block [%d] from buffer", c.ChainID, block.Header.Number)
@@ -155,9 +156,16 @@ func (c *coordinator) StoreBlock(block *common.Block, privateDataSets util.PvtDa
 	logger.Debugf("[%s] Validating block [%d]", c.ChainID, block.Header.Number)
 	err := c.Validator.Validate(block)
 	if err != nil {
-		logger.Errorf("Validation failed: %+v", err)
-		return err
+		return block, errors.WithMessage(err, "Validation failed")
 	}
+
+	return block, err
+}
+
+// StoreBlock stores block with private data into the ledger
+func (c *coordinator) StoreBlock(block *common.Block, privateDataSets util.PvtDataCollections) error {
+
+	//logs.WriteString("{\"ts\":" + strconv.FormatInt(time.Now().UnixNano(), 10) + ",\"msg\":\"FABRIC PERF Validation\",\"block\":" + strconv.Itoa(int(block.Header.Number)) + ",\"STEP\":1}\n")
 
 	blockAndPvtData := &ledger.BlockAndPvtData{
 		Block:          block,

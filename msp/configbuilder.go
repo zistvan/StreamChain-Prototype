@@ -197,6 +197,10 @@ func GetVerifyingMspConfig(dir, ID, mspType string) (*msp.MSPConfig, error) {
 		return getMspConfig(dir, ID, nil)
 	case ProviderTypeToString(IDEMIX):
 		return GetIdemixMspConfig(dir, ID)
+	case ProviderTypeToString(NOOP):
+		conf, err := getMspConfig(dir, ID, nil)
+		conf.Type = int32(NOOP)
+		return conf, err
 	default:
 		return nil, errors.Errorf("unknown MSP type '%s'", mspType)
 	}

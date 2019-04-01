@@ -145,7 +145,7 @@ func (h *queryHelper) getPrivateData(ns, coll, key string) ([]byte, error) {
 	}
 	if !version.AreSame(hashVersion, ver) {
 		return nil, &txmgr.ErrPvtdataNotAvailable{Msg: fmt.Sprintf(
-			"private data matching public hash version is not available. Public hash version = %s, Private data version = %s",
+			"private data matching public hash version is not available. Public hash version = %#v, Private data version = %#v",
 			hashVersion, ver)}
 	}
 	if h.rwsetBuilder != nil {
@@ -285,7 +285,7 @@ func (h *queryHelper) done() {
 	}
 
 	defer func() {
-		h.txmgr.commitRWLock.RUnlock()
+		//h.txmgr.commitRWLock.RUnlock()
 		h.doneInvoked = true
 		for _, itr := range h.itrs {
 			itr.Close()

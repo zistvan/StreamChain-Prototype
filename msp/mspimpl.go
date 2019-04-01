@@ -101,6 +101,11 @@ type bccspmsp struct {
 // generate identities and signing identities backed by
 // certificates and keypairs
 func newBccspMsp(version MSPVersion) (MSP, error) {
+	return newBccspMspRaw(version)
+}
+
+// newBccspMspRaw is the same as new but return a raw bccspmsp struct
+func newBccspMspRaw(version MSPVersion) (*bccspmsp, error) {
 	mspLogger.Debugf("Creating BCCSP-based MSP instance")
 
 	bccsp := factory.GetDefault()

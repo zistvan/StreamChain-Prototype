@@ -7,6 +7,9 @@ package stateleveldb
 
 import (
 	"bytes"
+	"hash/fnv"
+	"os"
+	"sync"
 
 	"github.com/hyperledger/fabric/common/flogging"
 	"github.com/hyperledger/fabric/common/ledger/util/leveldbhelper"
@@ -22,6 +25,14 @@ var logger = flogging.MustGetLogger("stateleveldb")
 var compositeKeySep = []byte{0x00}
 var lastKeyIndicator = byte(0x01)
 var savePointKey = []byte{0x00}
+
+const LockCount = 64
+
+func hash(s []byte) uint32 {
+	h := fnv.New32a()
+	h.Write(s)
+	return h.Sum32()
+}
 
 // VersionedDBProvider implements interface VersionedDBProvider
 type VersionedDBProvider struct {
@@ -48,13 +59,14 @@ func (provider *VersionedDBProvider) Close() {
 
 // VersionedDB implements VersionedDB interface
 type versionedDB struct {
-	db     *leveldbhelper.DBHandle
-	dbName string
+	db       *leveldbhelper.DBHandle
+	dbName   string
+	dataLock []sync.RWMutex
 }
 
 // newVersionedDB constructs an instance of VersionedDB
 func newVersionedDB(db *leveldbhelper.DBHandle, dbName string) *versionedDB {
-	return &versionedDB{db, dbName}
+	return &versionedDB{db, dbName, make([]sync.RWMutex, LockCount)}
 }
 
 // Open implements method in VersionedDB interface
@@ -82,6 +94,11 @@ func (vdb *versionedDB) BytesKeySupported() bool {
 func (vdb *versionedDB) GetState(namespace string, key string) (*statedb.VersionedValue, error) {
 	logger.Debugf("GetState(). ns=%s, key=%s", namespace, key)
 	compositeKey := constructCompositeKey(namespace, key)
+
+	lockID := hash(compositeKey) % LockCount
+	vdb.dataLock[lockID].RLock()
+	defer vdb.dataLock[lockID].RUnlock()
+
 	dbVal, err := vdb.db.Get(compositeKey)
 	if err != nil {
 		return nil, err
@@ -94,6 +111,12 @@ func (vdb *versionedDB) GetState(namespace string, key string) (*statedb.Version
 
 // GetVersion implements method in VersionedDB interface
 func (vdb *versionedDB) GetVersion(namespace string, key string) (*version.Height, error) {
+
+	compositeKey := constructCompositeKey(namespace, key)
+	lockID := hash(compositeKey) % LockCount
+	vdb.dataLock[lockID].RLock()
+	defer vdb.dataLock[lockID].RUnlock()
+
 	versionedValue, err := vdb.GetState(namespace, key)
 	if err != nil {
 		return nil, err
@@ -174,6 +197,9 @@ func (vdb *versionedDB) ApplyUpdates(batch *statedb.UpdateBatch, height *version
 			compositeKey := constructCompositeKey(ns, k)
 			logger.Debugf("Channel [%s]: Applying key(string)=[%s] key(bytes)=[%#v]", vdb.dbName, string(compositeKey), compositeKey)
 
+			lockID := hash(compositeKey) % LockCount
+			vdb.dataLock[lockID].Lock()
+
 			if vv.Value == nil {
 				dbBatch.Delete(compositeKey)
 			} else {
@@ -183,6 +209,7 @@ func (vdb *versionedDB) ApplyUpdates(batch *statedb.UpdateBatch, height *version
 				}
 				dbBatch.Put(compositeKey, encodedVal)
 			}
+			vdb.dataLock[lockID].Unlock()
 		}
 	}
 	// Record a savepoint at a given height
@@ -192,10 +219,18 @@ func (vdb *versionedDB) ApplyUpdates(batch *statedb.UpdateBatch, height *version
 	if height != nil {
 		dbBatch.Put(savePointKey, height.ToBytes())
 	}
+
 	// Setting snyc to true as a precaution, false may be an ok optimization after further testing.
-	if err := vdb.db.WriteBatch(dbBatch, true); err != nil {
+	sync := true
+	if os.Getenv("STREAMCHAIN_SYNCDB") == "false" {
+		sync = false
+	}
+
+	// Setting snyc to true as a precaution, false may be an ok optimization after further testing.
+	if err := vdb.db.WriteBatch(dbBatch, sync); err != nil {
 		return err
 	}
+
 	return nil
 }
 

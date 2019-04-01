@@ -85,7 +85,7 @@ func (txmgr *LockBasedTxMgr) GetLastSavepoint() (*version.Height, error) {
 // NewQueryExecutor implements method in interface `txmgmt.TxMgr`
 func (txmgr *LockBasedTxMgr) NewQueryExecutor(txid string) (ledger.QueryExecutor, error) {
 	qe := newQueryExecutor(txmgr, txid)
-	txmgr.commitRWLock.RLock()
+	//txmgr.commitRWLock.RLock()
 	return qe, nil
 }
 
@@ -96,7 +96,7 @@ func (txmgr *LockBasedTxMgr) NewTxSimulator(txid string) (ledger.TxSimulator, er
 	if err != nil {
 		return nil, err
 	}
-	txmgr.commitRWLock.RLock()
+	//txmgr.commitRWLock.RLock()
 	return s, nil
 }
 
@@ -475,13 +475,13 @@ func (txmgr *LockBasedTxMgr) Commit() error {
 	}
 
 	commitHeight := version.NewHeight(txmgr.current.blockNum(), txmgr.current.maxTxNumber())
-	txmgr.commitRWLock.Lock()
+	//txmgr.commitRWLock.Lock()
 	logger.Debugf("Write lock acquired for committing updates to state database")
 	if err := txmgr.db.ApplyPrivacyAwareUpdates(txmgr.current.batch, commitHeight); err != nil {
 		txmgr.commitRWLock.Unlock()
 		return err
 	}
-	txmgr.commitRWLock.Unlock()
+	//txmgr.commitRWLock.Unlock()
 	// only while holding a lock on oldBlockCommit, we should clear the cache as the
 	// cache is being used by the old pvtData committer to load the version of
 	// hashedKeys. Also, note that the PrepareForExpiringKeys uses the cache.

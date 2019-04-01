@@ -200,6 +200,7 @@ type ProviderType int
 const (
 	FABRIC ProviderType = iota // MSP is of FABRIC type
 	IDEMIX                     // MSP is of IDEMIX type
+	NOOP                       // MSP if od NOOP type
 	OTHER                      // MSP is of OTHER TYPE
 
 	// NOTE: as new types are added to this set,
@@ -209,6 +210,7 @@ const (
 var mspTypeStrings = map[ProviderType]string{
 	FABRIC: "bccsp",
 	IDEMIX: "idemix",
+	NOOP:   "noop",
 }
 
 // ProviderTypeToString returns a string that represents the ProviderType integer

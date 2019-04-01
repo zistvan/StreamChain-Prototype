@@ -18,7 +18,7 @@ import (
 	coreUtil "github.com/hyperledger/fabric/common/util"
 	"github.com/hyperledger/fabric/core/common/ccprovider"
 	"github.com/hyperledger/fabric/core/common/sysccprovider"
-	"github.com/hyperledger/fabric/core/handlers/validation/api"
+	validation "github.com/hyperledger/fabric/core/handlers/validation/api"
 	"github.com/hyperledger/fabric/core/ledger/kvledger/txmgmt/rwsetutil"
 	"github.com/hyperledger/fabric/protos/common"
 	"github.com/hyperledger/fabric/protos/peer"
@@ -63,10 +63,10 @@ func (v *VsccValidatorImpl) VSCCValidateTx(seq int, payload *common.Payload, env
 	}
 
 	/* obtain the list of namespaces we're writing stuff to;
-	   at first, we establish a few facts about this invocation:
-	   1) which namespaces does it write to?
-	   2) does it write to LSCC's namespace?
-	   3) does it write to any cc that cannot be invoked? */
+	at first, we establish a few facts about this invocation:
+	1) which namespaces does it write to?
+	2) does it write to LSCC's namespace?
+	3) does it write to any cc that cannot be invoked? */
 	writesToLSCC := false
 	writesToNonInvokableSCC := false
 	respPayload, err := utils.GetActionFromEnvelope(envBytes)
@@ -269,6 +269,7 @@ func (v *VsccValidatorImpl) VSCCValidateTxForCC(ctx *Context) error {
 	if e, isExecutionError := err.(*validation.ExecutionFailureError); isExecutionError {
 		return &commonerrors.VSCCExecutionFailureError{Err: e}
 	}
+
 	// Else, treat it as an endorsement error.
 	return &commonerrors.VSCCEndorsementPolicyError{Err: err}
 }

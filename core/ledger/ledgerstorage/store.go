@@ -7,6 +7,7 @@ SPDX-License-Identifier: Apache-2.0
 package ledgerstorage
 
 import (
+	"os"
 	"sync"
 
 	"github.com/hyperledger/fabric/common/flogging"
@@ -129,9 +130,13 @@ func (s *Store) CommitWithPvtData(blockAndPvtdata *ledger.BlockAndPvtData) error
 		logger.Debugf("Skipping writing block [%d] to pvt block store as the store height is [%d]", blockNum, pvtBlkStoreHt)
 	}
 
-	if err := s.AddBlock(blockAndPvtdata.Block); err != nil {
-		s.pvtdataStore.Rollback()
-		return err
+	strAddBlock := os.Getenv("STREAMCHAIN_ADDBLOCK")
+
+	if blockAndPvtdata.Block.Header.Number < 10 || strAddBlock == "" || strAddBlock == "true" {
+		if err := s.AddBlock(blockAndPvtdata.Block); err != nil { //ZSOLT: move this call up to the parallel part...
+			s.pvtdataStore.Rollback()
+			return err
+		}
 	}
 
 	if writtenToPvtStore {
