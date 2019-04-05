@@ -109,7 +109,7 @@ func (lc *LedgerCommitter) CommitWithPvtData(blockAndPvtData *ledger.BlockAndPvt
 			firstTransaction := chdr.TxId
 		*/
 		//fmt.Printf("{\"ts\":" + strconv.FormatInt(time.Now().UnixNano(), 10) + ",\"msg\":\"FABRIC PERF Validation\",\"block\":\"" + strconv.Itoa(int(blockAndPvtData.Block.GetHeader().GetNumber())) + "\",\"STEP\":3}\n")
-		fmt.Printf(strconv.FormatInt(time.Now().UnixNano(), 10) + "," + strconv.Itoa(int(blockAndPvtData.Block.GetHeader().GetNumber())) + " (Step 3)\n")
+		fmt.Println("3," + strconv.FormatInt(time.Now().UnixNano(), 10) + "," + strconv.Itoa(int(blockAndPvtData.Block.GetHeader().GetNumber())))
 	}
 
 	if config.Log.Validation {

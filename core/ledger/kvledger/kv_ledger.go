@@ -309,7 +309,7 @@ func (l *kvLedger) CommitWithPvtData(pvtdataAndBlock *ledger.BlockAndPvtData) er
 
 	if config.Log.FullCommit {
 		//fmt.Printf("{\"ts\":" + strconv.FormatInt(time.Now().UnixNano(), 10) + ",\"msg\":\"FABRIC PERF Validation\",\"block\":" + strconv.Itoa(int(blockNo)) + ",\"STEP\":2}\n")
-		fmt.Printf(strconv.FormatInt(time.Now().UnixNano(), 10) + "," + strconv.Itoa(int(blockNo)) + " (Step 2)\n")
+		fmt.Println("2," + strconv.FormatInt(time.Now().UnixNano(), 10) + "," + strconv.Itoa(int(blockNo)))
 	}
 
 	elapsedBlockProcessing := time.Since(startBlockProcessing)

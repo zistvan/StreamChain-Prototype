@@ -157,7 +157,26 @@ func (c *coordinator) VerifyBlock(block *common.Block, privateDataSets util.PvtD
 
 	if config.Log.FullCommit {
 		//fmt.Printf("{\"ts\":" + strconv.FormatInt(time.Now().UnixNano(), 10) + ",\"msg\":\"FABRIC PERF Validation\",\"block\":" + strconv.Itoa(int(block.Header.Number)) + ",\"STEP\":0}\n")
-		fmt.Printf(strconv.FormatInt(time.Now().UnixNano(), 10) + "," + strconv.Itoa(int(block.Header.Number)) + " (Step 0)\n")
+		fmt.Println("0," + strconv.FormatInt(time.Now().UnixNano(), 10) + "," + strconv.Itoa(int(block.Header.Number)))
+	}
+
+	txcount := -1
+
+	if block != nil && block.Metadata != nil && block.Metadata.Metadata != nil && block.Data != nil && block.Data.Data != nil {
+		txcount = 0
+		txsFilter := ha.TxValidationFlags(block.Metadata.Metadata[common.BlockMetadataIndex_TRANSACTIONS_FILTER])
+
+		if len(txsFilter) == 0 {
+			txsFilter = ha.NewTxValidationFlags(len(block.Data.Data))
+			block.Metadata.Metadata[common.BlockMetadataIndex_TRANSACTIONS_FILTER] = txsFilter
+		}
+
+		for txIndex := range block.Data.Data {
+			if txsFilter.IsInvalid(txIndex) {
+				continue
+			}
+			txcount++
+		}
 	}
 
 	if config.Log.Validation {
@@ -201,7 +220,7 @@ func (c *coordinator) StoreBlock(block *common.Block, privateDataSets util.PvtDa
 
 	if config.Log.FullCommit {
 		//fmt.Printf("{\"ts\":" + strconv.FormatInt(time.Now().UnixNano(), 10) + ",\"msg\":\"FABRIC PERF Validation\",\"block\":" + strconv.Itoa(int(block.Header.Number)) + ",\"STEP\":1}\n")
-		fmt.Printf(strconv.FormatInt(time.Now().UnixNano(), 10) + "," + strconv.Itoa(int(block.Header.Number)) + " (Step 1)\n")
+		fmt.Println("1," + strconv.FormatInt(time.Now().UnixNano(), 10) + "," + strconv.Itoa(int(block.Header.Number)))
 	}
 
 	blockAndPvtData := &ledger.BlockAndPvtData{
