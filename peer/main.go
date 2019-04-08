@@ -7,10 +7,12 @@ SPDX-License-Identifier: Apache-2.0
 package main
 
 import (
+	"fmt"
 	_ "net/http/pprof"
 	"os"
 	"strings"
 
+	"github.com/hyperledger/fabric/config"
 	"github.com/hyperledger/fabric/peer/chaincode"
 	"github.com/hyperledger/fabric/peer/channel"
 	"github.com/hyperledger/fabric/peer/clilogging"
@@ -27,6 +29,11 @@ var mainCmd = &cobra.Command{
 	Use: "peer"}
 
 func main() {
+
+	// Read in config
+	if err := config.ReadConfig("log.json"); err != nil {
+		fmt.Printf("%s\n", err)
+	}
 
 	// For environment variables.
 	viper.SetEnvPrefix(common.CmdRoot)

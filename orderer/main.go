@@ -9,8 +9,19 @@ SPDX-License-Identifier: Apache-2.0
 // function should be included in this package.
 package main
 
-import "github.com/hyperledger/fabric/orderer/common/server"
+import (
+	"fmt"
+
+	"github.com/hyperledger/fabric/config"
+	"github.com/hyperledger/fabric/orderer/common/server"
+)
 
 func main() {
+
+	// Read in config
+	if err := config.ReadConfig("log.json"); err != nil {
+		fmt.Printf("%s\n", err)
+	}
+
 	server.Main()
 }
