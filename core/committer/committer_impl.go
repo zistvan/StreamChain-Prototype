@@ -8,14 +8,13 @@ package committer
 
 import (
 	"fmt"
-	"strconv"
 	"time"
 
 	"github.com/hyperledger/fabric/common/flogging"
+	"github.com/hyperledger/fabric/config"
 	"github.com/hyperledger/fabric/core/ledger"
 	"github.com/hyperledger/fabric/protos/common"
 	"github.com/hyperledger/fabric/protos/utils"
-	"github.com/hyperledger/fabric_org/config"
 	"github.com/pkg/errors"
 )
 
@@ -99,22 +98,8 @@ func (lc *LedgerCommitter) CommitWithPvtData(blockAndPvtData *ledger.BlockAndPvt
 		return err
 	}
 
-	if config.Log.FullCommit {
-		/*
-			txData := blockAndPvtData.Block.Data.Data[0]
-			msg, _ := utils.UnmarshalEnvelope(txData)
-			payload, _ := utils.UnmarshalPayload(msg.Payload)
-			hdr := payload.GetHeader()
-			chdr, _ := utils.UnmarshalChannelHeader(hdr.ChannelHeader)
-			firstTransaction := chdr.TxId
-		*/
-		//fmt.Printf("{\"ts\":" + strconv.FormatInt(time.Now().UnixNano(), 10) + ",\"msg\":\"FABRIC PERF Validation\",\"block\":\"" + strconv.Itoa(int(blockAndPvtData.Block.GetHeader().GetNumber())) + "\",\"STEP\":3}\n")
-		fmt.Printf(strconv.FormatInt(time.Now().UnixNano(), 10) + "," + strconv.Itoa(int(blockAndPvtData.Block.GetHeader().GetNumber())) + " (Step 3)\n")
-	}
-
 	if config.Log.Validation {
-
-		fmt.Println("val1," + strconv.Itoa(int(blockAndPvtData.Block.GetHeader().GetNumber())) + "," + strconv.FormatInt(time.Now().UnixNano(), 10))
+		fmt.Printf("val3,%d,%d\n", time.Now().UnixNano(), blockAndPvtData.Block.GetHeader().GetNumber())
 	}
 
 	return nil

@@ -341,59 +341,34 @@ func (v *TxValidator) validateTx(req *blockValidationRequest, results chan<- *bl
 				return
 			}
 
-			// Validate tx with vscc and policy
-			logger.Debug("Validating transaction vscc tx validate")
-			err, cde := v.Vscc.VSCCValidateTx(tIdx, payload, d, block)
-			if err != nil {
-				logger.Errorf("VSCCValidateTx for transaction txId = %s returned error: %s", txID, err)
-				switch err.(type) {
-				case *commonerrors.VSCCExecutionFailureError:
-					results <- &blockValidationResult{
-						tIdx: tIdx,
-						err:  err,
-					}
-					return
-				case *commonerrors.VSCCInfoLookupFailureError:
-					results <- &blockValidationResult{
-						tIdx: tIdx,
-						err:  err,
-					}
-					return
-				default:
-					results <- &blockValidationResult{
-						tIdx:           tIdx,
-						validationCode: cde,
-					}
-					return
-				}
-			}
-
-			strVSCC := os.Getenv("STREAMCHAIN_VSCC")
+			var strVSCC = os.Getenv("STREAMCHAIN_VSCC")
 
 			if strVSCC == "" || strVSCC == "true" {
 				// Validate tx with vscc and policy
 				logger.Debug("Validating transaction vscc tx validate")
 				err, cde := v.Vscc.VSCCValidateTx(tIdx, payload, d, block)
-				logger.Errorf("VSCCValidateTx for transaction txId = %s returned error: %s", txID, err)
-				switch err.(type) {
-				case *commonerrors.VSCCExecutionFailureError:
-					results <- &blockValidationResult{
-						tIdx: tIdx,
-						err:  err,
+				if err != nil {
+					logger.Errorf("VSCCValidateTx for transaction txId = %s returned error: %s", txID, err)
+					switch err.(type) {
+					case *commonerrors.VSCCExecutionFailureError:
+						results <- &blockValidationResult{
+							tIdx: tIdx,
+							err:  err,
+						}
+						return
+					case *commonerrors.VSCCInfoLookupFailureError:
+						results <- &blockValidationResult{
+							tIdx: tIdx,
+							err:  err,
+						}
+						return
+					default:
+						results <- &blockValidationResult{
+							tIdx:           tIdx,
+							validationCode: cde,
+						}
+						return
 					}
-					return
-				case *commonerrors.VSCCInfoLookupFailureError:
-					results <- &blockValidationResult{
-						tIdx: tIdx,
-						err:  err,
-					}
-					return
-				default:
-					results <- &blockValidationResult{
-						tIdx:           tIdx,
-						validationCode: cde,
-					}
-					return
 				}
 			}
 

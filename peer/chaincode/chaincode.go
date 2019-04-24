@@ -43,6 +43,10 @@ func addFlags(cmd *cobra.Command) {
 	common.AddOrdererFlags(cmd)
 	flags := cmd.PersistentFlags()
 	flags.StringVarP(&transient, "transient", "", "", "Transient map of arguments in JSON encoding")
+	flags.IntVar(&parallelism, "parallelism", 1, "Number of invocations per thread")
+	flags.IntVar(&repetitions, "repetitions", 1, "Number of parallel invocations")
+	flags.IntVar(&sleepms, "sleep", 0, "Millisecond sleeps between iterations")
+	flags.StringVar(&workloadFile, "workload", "", "File containing the workload for parallel executions")
 }
 
 // Cmd returns the cobra command for Chaincode
@@ -84,6 +88,10 @@ var (
 	connectionProfile     string
 	waitForEvent          bool
 	waitForEventTimeout   time.Duration
+	sleepms               int
+	parallelism           int
+	repetitions           int
+	workloadFile          string
 )
 
 var chaincodeCmd = &cobra.Command{

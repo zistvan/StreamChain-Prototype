@@ -18,6 +18,7 @@ import (
 	"github.com/hyperledger/fabric/common/flogging"
 	"github.com/hyperledger/fabric/common/metrics"
 	"github.com/hyperledger/fabric/common/util"
+	"github.com/hyperledger/fabric/config"
 	"github.com/hyperledger/fabric/core/chaincode/platforms"
 	"github.com/hyperledger/fabric/core/chaincode/shim"
 	"github.com/hyperledger/fabric/core/common/ccprovider"
@@ -27,7 +28,6 @@ import (
 	pb "github.com/hyperledger/fabric/protos/peer"
 	"github.com/hyperledger/fabric/protos/transientstore"
 	putils "github.com/hyperledger/fabric/protos/utils"
-	"github.com/hyperledger/fabric_org/config"
 	"github.com/pkg/errors"
 	"go.uber.org/zap"
 )
@@ -447,7 +447,7 @@ func (e *Endorser) ProcessProposal(ctx context.Context, signedProp *pb.SignedPro
 		}
 
 		if config.Log.Endorsement {
-			fmt.Printf("%d,%f\n", time.Now().UnixNano()/1000000, time.Since(startTime).Seconds()*1000)
+			fmt.Printf("end,%d,%d\n", time.Now().UnixNano()/1000000, time.Since(startTime).Nanoseconds())
 		}
 
 		endorserLogger.Debug("Exit: request from", addr)

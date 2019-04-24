@@ -8,13 +8,13 @@ package kvledger
 
 import (
 	"fmt"
-	"strconv"
 	"sync"
 	"time"
 
 	"github.com/hyperledger/fabric/common/flogging"
 	commonledger "github.com/hyperledger/fabric/common/ledger"
 	"github.com/hyperledger/fabric/common/util"
+	"github.com/hyperledger/fabric/config"
 	"github.com/hyperledger/fabric/core/ledger"
 	"github.com/hyperledger/fabric/core/ledger/cceventmgmt"
 	"github.com/hyperledger/fabric/core/ledger/confighistory"
@@ -28,7 +28,6 @@ import (
 	"github.com/hyperledger/fabric/core/ledger/pvtdatapolicy"
 	"github.com/hyperledger/fabric/protos/common"
 	"github.com/hyperledger/fabric/protos/peer"
-	"github.com/hyperledger/fabric_org/config"
 	"github.com/pkg/errors"
 )
 
@@ -307,9 +306,9 @@ func (l *kvLedger) CommitWithPvtData(pvtdataAndBlock *ledger.BlockAndPvtData) er
 		return err
 	}
 
-	if config.Log.FullCommit {
-		//fmt.Printf("{\"ts\":" + strconv.FormatInt(time.Now().UnixNano(), 10) + ",\"msg\":\"FABRIC PERF Validation\",\"block\":" + strconv.Itoa(int(blockNo)) + ",\"STEP\":2}\n")
-		fmt.Printf(strconv.FormatInt(time.Now().UnixNano(), 10) + "," + strconv.Itoa(int(blockNo)) + " (Step 2)\n")
+	if config.Log.Validation {
+		fmt.Printf("val2,%d,%d\n", time.Now().UnixNano(), blockNo)
+
 	}
 
 	elapsedBlockProcessing := time.Since(startBlockProcessing)

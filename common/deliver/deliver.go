@@ -8,6 +8,7 @@ package deliver
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"math"
 	"strconv"
@@ -19,6 +20,7 @@ import (
 	"github.com/hyperledger/fabric/common/ledger/blockledger"
 	"github.com/hyperledger/fabric/common/policies"
 	"github.com/hyperledger/fabric/common/util"
+	"github.com/hyperledger/fabric/config"
 	"github.com/hyperledger/fabric/core/comm"
 	cb "github.com/hyperledger/fabric/protos/common"
 	ab "github.com/hyperledger/fabric/protos/orderer"
@@ -319,6 +321,10 @@ func (h *Handler) deliverBlocks(ctx context.Context, srv *Server, envelope *cb.E
 		}
 
 		logger.Debugf("[channel: %s] Delivering block for (%p) for %s", chdr.ChannelId, seekInfo, addr)
+
+		if config.Log.Ordering {
+			fmt.Printf("ord1,%d,%d\n", time.Now().UnixNano(), block.Header.Number)
+		}
 
 		if err := srv.SendBlockResponse(block); err != nil {
 			logger.Warningf("[channel: %s] Error sending to %s: %s", chdr.ChannelId, addr, err)

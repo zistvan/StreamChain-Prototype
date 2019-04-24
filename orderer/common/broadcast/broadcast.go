@@ -7,11 +7,13 @@ SPDX-License-Identifier: Apache-2.0
 package broadcast
 
 import (
+	"fmt"
 	"io"
 	"time"
 
 	"github.com/hyperledger/fabric/common/flogging"
 	"github.com/hyperledger/fabric/common/util"
+	"github.com/hyperledger/fabric/config"
 	"github.com/hyperledger/fabric/orderer/common/msgprocessor"
 	cb "github.com/hyperledger/fabric/protos/common"
 	ab "github.com/hyperledger/fabric/protos/orderer"
@@ -134,6 +136,11 @@ func (mt *MetricsTracker) BeginEnqueue() {
 
 // ProcessMessage validates and enqueues a single message
 func (bh *Handler) ProcessMessage(msg *cb.Envelope, addr string) (resp *ab.BroadcastResponse) {
+
+	if config.Log.Ordering {
+		fmt.Printf("ord0,%d,%s\n", time.Now().UnixNano(), addr)
+	}
+
 	tracker := &MetricsTracker{
 		ChannelID: "unknown",
 		TxType:    "unknown",

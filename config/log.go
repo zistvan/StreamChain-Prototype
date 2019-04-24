@@ -3,17 +3,15 @@ package config
 import (
 	"encoding/json"
 	"errors"
-	"fmt"
 	"os"
 )
 
 var Log LogConfig
 
 type LogConfig struct {
-	Validation  bool
 	Endorsement bool
+	Validation  bool
 	Ordering    bool
-	FullCommit  bool
 }
 
 func ReadConfig(path string) error {
@@ -31,13 +29,11 @@ func ReadConfig(path string) error {
 	lc := LogConfig{}
 
 	if err := dec.Decode(&lc); err != nil {
-		Log = LogConfig{false, false, false, false}
+		Log = LogConfig{false, false, false}
 		return err
 	}
 
 	Log = lc
-
-	fmt.Printf("Log config loaded: %t\n", Log)
 
 	return nil
 }

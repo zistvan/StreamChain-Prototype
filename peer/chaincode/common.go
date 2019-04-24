@@ -7,14 +7,17 @@ SPDX-License-Identifier: Apache-2.0
 package chaincode
 
 import (
+	"bufio"
 	"context"
 	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
 	"math"
+	"os"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/golang/protobuf/proto"
 	"github.com/hyperledger/fabric/common/cauthdsl"
@@ -22,6 +25,8 @@ import (
 	"github.com/hyperledger/fabric/common/util"
 	"github.com/hyperledger/fabric/core/chaincode"
 	"github.com/hyperledger/fabric/core/chaincode/shim"
+	"github.com/hyperledger/fabric/core/comm"
+	"github.com/hyperledger/fabric/core/config"
 	"github.com/hyperledger/fabric/core/container"
 	"github.com/hyperledger/fabric/msp"
 	ccapi "github.com/hyperledger/fabric/peer/chaincode/api"
@@ -34,6 +39,9 @@ import (
 	"github.com/pkg/errors"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/grpclog"
 )
 
 // checkSpec to see if chaincode resides within current package capture for language.
@@ -89,67 +97,230 @@ func getChaincodeSpec(cmd *cobra.Command) (*pb.ChaincodeSpec, error) {
 	return spec, nil
 }
 
+type WorkloadEntry struct {
+	endorserEndpoint string
+	orderingEndpoint string
+	chaincodeSpec    *pb.ChaincodeSpec
+}
+
+func parseWorkload(cmd *cobra.Command) ([]*WorkloadEntry, error) {
+	workload := make([]*WorkloadEntry, 0, 1)
+	spec := &pb.ChaincodeSpec{}
+	if err := checkChaincodeCmdParams(cmd); err != nil {
+		return nil, err
+	}
+
+	if workloadFile == "" {
+		return nil, errors.New("--workload argument should be provided")
+	}
+
+	file, err := os.Open(workloadFile)
+	if err != nil {
+		return nil, fmt.Errorf("Could not read file '%s', error %s", workloadFile, err)
+	}
+	defer file.Close()
+
+	scanner := bufio.NewScanner(file)
+
+	for scanner.Scan() {
+		workloadEntry := &WorkloadEntry{}
+		// Build the spec
+		input := &pb.ChaincodeInput{}
+		text := scanner.Text()
+		fields := strings.Fields(text)
+		if err := json.Unmarshal([]byte(fields[2]), &input); err != nil {
+			return nil, fmt.Errorf("Chaincode argument error: %s", err)
+		}
+		chaincodeLang = strings.ToUpper(chaincodeLang)
+		if pb.ChaincodeSpec_Type_value[chaincodeLang] == int32(pb.ChaincodeSpec_JAVA) {
+			return nil, fmt.Errorf("Java chaincode is work-in-progress and disabled")
+		}
+		spec = &pb.ChaincodeSpec{
+			Type:        pb.ChaincodeSpec_Type(pb.ChaincodeSpec_Type_value[chaincodeLang]),
+			ChaincodeId: &pb.ChaincodeID{Path: chaincodePath, Name: chaincodeName, Version: chaincodeVersion},
+			Input:       input,
+		}
+		workloadEntry.chaincodeSpec = spec
+		workloadEntry.endorserEndpoint = fields[1]
+		workloadEntry.orderingEndpoint = fields[0]
+		workload = append(workload, workloadEntry)
+	}
+
+	return workload, nil
+
+}
+
 func chaincodeInvokeOrQuery(cmd *cobra.Command, invoke bool, cf *ChaincodeCmdFactory) (err error) {
-	spec, err := getChaincodeSpec(cmd)
+
+	workload := make([]*WorkloadEntry, 0, 1)
+	if workloadFile == "" {
+		spec, err := getChaincodeSpec(cmd)
+		if err != nil {
+			return err
+		}
+		workloadEntry := &WorkloadEntry{
+			chaincodeSpec: spec,
+		}
+		workload = append(workload, workloadEntry)
+	} else {
+		var err error
+		workload, err = parseWorkload(cmd)
+		if err != nil {
+			return err
+		}
+	}
+
 	if err != nil {
 		return err
 	}
 
-	// call with empty txid to ensure production code generates a txid.
-	// otherwise, tests can explicitly set their own txid
-	txID := ""
+	res := make(chan error)
+	doit := func(gid int) {
+		factory, err := InitCmdFactory(cmd.Name(), true, true)
+		if err != nil {
+			logger.Panicf("Error InitCmdFactory: %s", err)
+		}
 
-	proposalResp, err := ChaincodeInvokeOrQuery(
-		spec,
-		channelID,
-		txID,
-		invoke,
-		cf.Signer,
-		cf.Certificate,
-		cf.EndorserClients,
-		cf.DeliverClients,
-		cf.BroadcastClient)
+		endorserClients := make([]pb.EndorserClient, repetitions)
+		connections := make(map[string]*grpc.ClientConn)
+		broadcastClients := make([]common.BroadcastClient, repetitions)
+		broadcastClientsMap := make(map[string]common.BroadcastClient)
 
-	if err != nil {
-		return errors.Errorf("%s - proposal response: %v", err, proposalResp)
+		for i, workloadEntry := range workload[(gid * repetitions):((gid + 1) * repetitions)] {
+			endorserEndpoint := workloadEntry.endorserEndpoint
+			if connection, ok := connections[endorserEndpoint]; ok {
+				endorserClients[i] = pb.NewEndorserClient(connection)
+				if err != nil {
+					res <- fmt.Errorf("Error getting endorser client %s: %s", chainFuncName, err)
+					return
+				}
+			} else {
+				connection, err := newPeerClientConnectionWithAddress(endorserEndpoint)
+
+				if err != nil {
+					res <- fmt.Errorf("Error getting endorser client %s: %s", chainFuncName, err)
+					return
+				}
+
+				endorserClients[i] = pb.NewEndorserClient(connection)
+				connections[endorserEndpoint] = connection
+			}
+
+			orderingEndpoint := workloadEntry.orderingEndpoint
+			if broadcastClient, ok := broadcastClientsMap[orderingEndpoint]; ok {
+				broadcastClients[i] = broadcastClient
+			} else {
+				broadcastClient, err := common.GetBroadcastClientFnc()
+				if err != nil {
+					res <- fmt.Errorf("Error getting broadcast client: %s", err)
+					return
+				}
+				broadcastClients[i] = broadcastClient
+				broadcastClientsMap[orderingEndpoint] = broadcastClient
+			}
+		}
+		defer func() {
+			for _, c := range connections {
+				c.Close()
+			}
+			for _, c := range broadcastClientsMap {
+				c.Close()
+			}
+		}()
+
+		for i := 0; i < repetitions; i++ {
+			signer, err := common.GetDefaultSignerFnc()
+			if err != nil {
+				res <- fmt.Errorf("Error getting default signer: %s", err)
+				return
+			}
+			factory = &ChaincodeCmdFactory{
+				EndorserClients: []pb.EndorserClient{endorserClients[i]},
+				Signer:          signer,
+				BroadcastClient: broadcastClients[i],
+			}
+			if err != nil {
+				logger.Panicf("Error InitCmdFactory: %s", err)
+			}
+
+			txID := ""
+
+			proposalResp, err := ChaincodeInvokeOrQuery(
+				workload[((gid*repetitions)+i)].chaincodeSpec,
+				channelID,
+				txID,
+				invoke,
+				cf.Signer,
+				cf.Certificate,
+				factory.EndorserClients,
+				factory.DeliverClients,
+				factory.BroadcastClient)
+
+			if err != nil {
+				res <- errors.Errorf("%s - proposal response: %v", err, proposalResp)
+				return
+			}
+
+			if invoke {
+				logger.Debugf("ESCC invoke result: %v", proposalResp)
+				pRespPayload, err := putils.GetProposalResponsePayload(proposalResp.Payload)
+				if err != nil {
+					res <- fmt.Errorf("Error while unmarshaling proposal response payload: %s", err)
+					return
+				}
+				ca, err := putils.GetChaincodeAction(pRespPayload.Extension)
+				if err != nil {
+					res <- fmt.Errorf("Error while unmarshaling chaincode action: %s", err)
+					return
+				}
+				if proposalResp.Endorsement == nil {
+					logger.Warningf("endorsement failure during invoke. response: %v", proposalResp.Response)
+				}
+				logger.Infof("Chaincode invoke successful. result: %v", ca.Response)
+			} else {
+				if proposalResp == nil {
+					res <- fmt.Errorf("error during query: received nil proposal response")
+					return
+				}
+				if proposalResp.Endorsement == nil {
+					res <- fmt.Errorf("endorsement failure during query. response: %v", proposalResp.Response)
+					return
+				}
+
+				if chaincodeQueryRaw && chaincodeQueryHex {
+					res <- fmt.Errorf("options --raw (-r) and --hex (-x) are not compatible")
+					return
+				}
+				if chaincodeQueryRaw {
+					fmt.Println(proposalResp.Response.Payload)
+				}
+				if chaincodeQueryHex {
+					fmt.Printf("%x\n", proposalResp.Response.Payload)
+				}
+				fmt.Println(string(proposalResp.Response.Payload))
+			}
+
+			time.Sleep(time.Millisecond * time.Duration(sleepms))
+		}
+		res <- nil
+		return
 	}
 
-	if invoke {
-		logger.Debugf("ESCC invoke result: %v", proposalResp)
-		pRespPayload, err := putils.GetProposalResponsePayload(proposalResp.Payload)
-		if err != nil {
-			return errors.WithMessage(err, "error while unmarshaling proposal response payload")
-		}
-		ca, err := putils.GetChaincodeAction(pRespPayload.Extension)
-		if err != nil {
-			return errors.WithMessage(err, "error while unmarshaling chaincode action")
-		}
-		if proposalResp.Endorsement == nil {
-			return errors.Errorf("endorsement failure during invoke. response: %v", proposalResp.Response)
-		}
-		logger.Infof("Chaincode invoke successful. result: %v", ca.Response)
-	} else {
-		if proposalResp == nil {
-			return errors.New("error during query: received nil proposal response")
-		}
-		if proposalResp.Endorsement == nil {
-			return errors.Errorf("endorsement failure during query. response: %v", proposalResp.Response)
-		}
-
-		if chaincodeQueryRaw && chaincodeQueryHex {
-			return fmt.Errorf("options --raw (-r) and --hex (-x) are not compatible")
-		}
-		if chaincodeQueryRaw {
-			fmt.Println(proposalResp.Response.Payload)
-			return nil
-		}
-		if chaincodeQueryHex {
-			fmt.Printf("%x\n", proposalResp.Response.Payload)
-			return nil
-		}
-		fmt.Println(string(proposalResp.Response.Payload))
+	// we now send all txes
+	for i := 0; i < parallelism; i++ {
+		go doit(i)
 	}
-	return nil
+
+	var ierr error
+	for i := 0; i < parallelism; i++ {
+		err, ok := <-res
+		if !ok {
+			logger.Panicf("This shouldn't happen!!")
+		} else {
+			ierr = err
+		}
+	}
+	return ierr
 }
 
 type collectionConfigJson struct {
@@ -412,6 +583,34 @@ func InitCmdFactory(cmdName string, isEndorserRequired, isOrdererRequired bool) 
 		BroadcastClient: broadcastClient,
 		Certificate:     certificate,
 	}, nil
+}
+
+func newPeerClientConnectionWithAddress(peerAddress string) (*grpc.ClientConn, error) {
+
+	if viper.GetBool("peer.tls.enabled") {
+
+		var sn string
+		if viper.GetString("peer.tls.serverhostoverride") != "" {
+			sn = viper.GetString("peer.tls.serverhostoverride")
+		}
+
+		var creds credentials.TransportCredentials
+		if config.GetPath("peer.tls.rootcert.file") != "" {
+			var err error
+			creds, err = credentials.NewClientTLSFromFile(config.GetPath("peer.tls.rootcert.file"), sn)
+			if err != nil {
+				grpclog.Fatalf("Failed to create TLS credentials %v", err)
+			}
+		} else {
+			creds = credentials.NewClientTLSFromCert(nil, sn)
+		}
+
+		return comm.NewClientConnectionWithAddress(peerAddress, true, true,
+			creds, nil)
+	}
+
+	return comm.NewClientConnectionWithAddress(peerAddress, true, false, nil, nil)
+
 }
 
 // ChaincodeInvokeOrQuery invokes or queries the chaincode. If successful, the
