@@ -308,7 +308,6 @@ func (l *kvLedger) CommitWithPvtData(pvtdataAndBlock *ledger.BlockAndPvtData) er
 
 	if config.Log.Validation {
 		fmt.Printf("val2,%d,%d\n", time.Now().UnixNano(), blockNo)
-
 	}
 
 	elapsedBlockProcessing := time.Since(startBlockProcessing)
