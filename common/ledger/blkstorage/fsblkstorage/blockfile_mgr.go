@@ -10,6 +10,8 @@ import (
 	"bytes"
 	"fmt"
 	"math"
+	"os"
+	"strconv"
 	"sync"
 	"sync/atomic"
 
@@ -42,7 +44,7 @@ type blockfileMgr struct {
 	index             index
 	cpInfo            *checkpointInfo
 	cpInfoCond        *sync.Cond
-	currentFileWriter *blockfileWriter
+	currentFileWriter *batchedBlockfileWriter
 	bcInfo            atomic.Value
 }
 
@@ -123,6 +125,18 @@ func newBlockfileMgr(id string, conf *Conf, indexConfig *blkstorage.IndexConfig,
 	//Open a writer to the file identified by the number and truncate it to only contain the latest block
 	// that was completely saved (file system, index, cpinfo, etc)
 	currentFileWriter, err := newBlockfileWriter(deriveBlockfilePath(rootDir, cpInfo.latestFileChunkSuffixNum))
+
+	strBatchSize := os.Getenv("STREAMCHAIN_WRITEBATCH")
+
+	var bfw *batchedBlockfileWriter
+
+	if strBatchSize == "" || strBatchSize == "0" {
+		bfw = newBatchedBlockFileWriter(currentFileWriter, 0)
+	} else {
+		bsz, _ := strconv.Atoi(strBatchSize)
+		bfw = newBatchedBlockFileWriter(currentFileWriter, bsz)
+	}
+
 	if err != nil {
 		panic(fmt.Sprintf("Could not open writer to current file: %s", err))
 	}
@@ -139,7 +153,7 @@ func newBlockfileMgr(id string, conf *Conf, indexConfig *blkstorage.IndexConfig,
 
 	// Update the manager with the checkpoint info and the file writer
 	mgr.cpInfo = cpInfo
-	mgr.currentFileWriter = currentFileWriter
+	mgr.currentFileWriter = bfw
 	// Create a checkpoint condition (event) variable, for the  goroutine waiting for
 	// or announcing the occurrence of an event.
 	mgr.cpInfoCond = sync.NewCond(&sync.Mutex{})
@@ -228,12 +242,12 @@ func (mgr *blockfileMgr) moveToNextFile() {
 	if err != nil {
 		panic(fmt.Sprintf("Could not open writer to next file: %s", err))
 	}
-	mgr.currentFileWriter.close()
+	//mgr.currentFileWriter.close()
 	err = mgr.saveCurrentInfo(cpInfo, true)
 	if err != nil {
 		panic(fmt.Sprintf("Could not save next block file info to db: %s", err))
 	}
-	mgr.currentFileWriter = nextFileWriter
+	mgr.currentFileWriter.setBlockfileWriter(nextFileWriter)
 	mgr.updateCheckpoint(cpInfo)
 }
 
@@ -326,6 +340,10 @@ func (mgr *blockfileMgr) addBlock(block *common.Block) error {
 }
 
 func (mgr *blockfileMgr) syncIndex() error {
+
+	// Write out buffer before reading
+	mgr.currentFileWriter.writeOut(true)
+
 	var lastBlockIndexed uint64
 	var indexEmpty bool
 	var err error
@@ -552,6 +570,10 @@ func (mgr *blockfileMgr) fetchTransactionEnvelope(lp *fileLocPointer) (*common.E
 }
 
 func (mgr *blockfileMgr) fetchBlockBytes(lp *fileLocPointer) ([]byte, error) {
+
+	// Write out buffer before reading
+	mgr.currentFileWriter.writeOut(true)
+
 	stream, err := newBlockfileStream(mgr.rootDir, lp.fileSuffixNum, int64(lp.offset))
 	if err != nil {
 		return nil, err
@@ -565,6 +587,10 @@ func (mgr *blockfileMgr) fetchBlockBytes(lp *fileLocPointer) ([]byte, error) {
 }
 
 func (mgr *blockfileMgr) fetchRawBytes(lp *fileLocPointer) ([]byte, error) {
+
+	// Write out buffer before reading
+	mgr.currentFileWriter.writeOut(true)
+
 	filePath := deriveBlockfilePath(mgr.rootDir, lp.fileSuffixNum)
 	reader, err := newBlockfileReader(filePath)
 	if err != nil {
