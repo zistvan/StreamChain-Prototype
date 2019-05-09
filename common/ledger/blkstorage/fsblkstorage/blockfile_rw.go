@@ -7,19 +7,22 @@ SPDX-License-Identifier: Apache-2.0
 package fsblkstorage
 
 import (
-	"fmt"
 	"os"
+	"sync"
 	"time"
 
 	"github.com/pkg/errors"
 )
 
+var lock = sync.RWMutex{}
+
 type batchedBlockfileWriter struct {
-	batch      int
-	bfw        *blockfileWriter
-	buffer     []writeInfo
-	currentLen int
-	//updated    chan struct{}
+	batch         int
+	bfw           *blockfileWriter
+	buffer        []writeInfo
+	currentLen    int
+	currentBuffer []byte
+	updated       chan struct{}
 }
 
 type writeInfo struct {
@@ -28,8 +31,11 @@ type writeInfo struct {
 }
 
 func newBatchedBlockFileWriter(bfw *blockfileWriter, batch int) *batchedBlockfileWriter {
-	//return &batchedBlockfileWriter{bfw: bfw, batch: batch, buffer: make([]writeInfo, 0, batch), updated: make(chan struct{})}
-	return &batchedBlockfileWriter{bfw: bfw, batch: batch, buffer: make([]writeInfo, 0, batch)}
+	b := &batchedBlockfileWriter{bfw: bfw, batch: batch, buffer: make([]writeInfo, 0, batch), updated: make(chan struct{})}
+
+	go b.finalWrite()
+
+	return b
 }
 
 func (w *batchedBlockfileWriter) setBlockfileWriter(bfw *blockfileWriter) {
@@ -44,23 +50,21 @@ func (w *batchedBlockfileWriter) append(b []byte, sync bool) error {
 		return w.bfw.append(b, sync)
 	}
 
+	if w.currentBuffer == nil {
+		w.currentBuffer = make([]byte, 0, len(b))
+	}
+
+	w.currentBuffer = append(w.currentBuffer, b...)
+
 	if sync {
-		w.buffer = append(w.buffer, writeInfo{file: w.bfw.file, data: b})
-	} else {
-		if len(w.buffer) > 0 {
-			last := w.buffer[len(w.buffer)-1]
-			last.data = append(last.data, b...)
-		} else {
-			w.buffer = append(w.buffer, writeInfo{file: w.bfw.file, data: b})
-		}
+		w.buffer = append(w.buffer, writeInfo{file: w.bfw.file, data: append([]byte(nil), w.currentBuffer...)})
+		w.currentBuffer = w.currentBuffer[:0]
 	}
 
 	if len(w.buffer) == w.batch {
 		if err := w.writeOut(true); err != nil {
 			return err
 		}
-
-		//go w.writeOut(true)
 	}
 
 	w.currentLen += len(b)
@@ -68,33 +72,35 @@ func (w *batchedBlockfileWriter) append(b []byte, sync bool) error {
 	return nil
 }
 
-/*
 func (w *batchedBlockfileWriter) finalWrite() {
 
 	for {
 		select {
 		case <-time.After(time.Second * 10):
 			if err := w.writeOut(false); err != nil {
-				logger.Errorf("Error in batched write")
+				logger.Errorf("Error in batched write: %v", err)
 			}
 		case <-w.updated:
 			return
 		}
 	}
 }
-*/
+
 func (w *batchedBlockfileWriter) close() {
 	w.bfw.close()
-	//close(w.updated)
 }
 
 func (w *batchedBlockfileWriter) writeOut(wait bool) error {
 
-	start := time.Now()
+	//lock.Lock()
 
-	//if wait {
-	//	w.updated <- struct{}{}
-	//}
+	//start := time.Now()
+
+	if wait {
+		go w.finalWrite()
+	}
+
+	w.updated <- struct{}{}
 
 	var err error
 
@@ -102,7 +108,7 @@ func (w *batchedBlockfileWriter) writeOut(wait bool) error {
 
 	for _, v := range w.buffer {
 
-		if lastFile != nil && lastFile != v.file {
+		if lastFile != nil && lastFile.Name() != v.file.Name() {
 			if err = lastFile.Sync(); err != nil {
 				return err
 			}
@@ -117,17 +123,17 @@ func (w *batchedBlockfileWriter) writeOut(wait bool) error {
 		lastFile = v.file
 	}
 
-	if err = lastFile.Sync(); err != nil {
-		return err
+	if lastFile != nil {
+		if err = lastFile.Sync(); err != nil {
+			return err
+		}
 	}
 
-	//if wait {
-	//	go w.finalWrite()
-	//}
-
-	fmt.Printf("wr,%d,%d,%.2f\n", time.Now().UnixNano(), len(w.buffer), time.Since(start).Seconds()*1000)
+	//logger.Errorf("wr,%d,%d,%.2f\n", time.Now().UnixNano(), len(w.buffer), time.Since(start).Seconds()*1000)
 
 	w.buffer = w.buffer[:0]
+
+	//lock.Unlock()
 
 	return nil
 }

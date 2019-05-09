@@ -9,6 +9,7 @@ package fsblkstorage
 import (
 	"bytes"
 	"fmt"
+	"sync"
 
 	"github.com/golang/protobuf/proto"
 	"github.com/hyperledger/fabric/common/ledger/blkstorage"
@@ -32,6 +33,7 @@ const (
 
 var indexCheckpointKey = []byte(indexCheckpointKeyStr)
 var errIndexEmpty = errors.New("NoBlockIndexed")
+var rwLock = &sync.RWMutex{}
 
 type index interface {
 	getLastBlockIndexed() (uint64, error)
@@ -55,9 +57,12 @@ type blockIdxInfo struct {
 type blockIndex struct {
 	indexItemsMap map[blkstorage.IndexableAttr]bool
 	db            *leveldbhelper.DBHandle
+	cache         map[string][]byte
+	pendingBatch  int
+	batchSize     int
 }
 
-func newBlockIndex(indexConfig *blkstorage.IndexConfig, db *leveldbhelper.DBHandle) (*blockIndex, error) {
+func newBlockIndex(indexConfig *blkstorage.IndexConfig, db *leveldbhelper.DBHandle, batchSize int) (*blockIndex, error) {
 	indexItems := indexConfig.AttrsToIndex
 	logger.Debugf("newBlockIndex() - indexItems:[%s]", indexItems)
 	indexItemsMap := make(map[blkstorage.IndexableAttr]bool)
@@ -72,13 +77,37 @@ func newBlockIndex(indexConfig *blkstorage.IndexConfig, db *leveldbhelper.DBHand
 		return nil, errors.Errorf("dependent index [%s] is not enabled for [%s] or [%s]",
 			blkstorage.IndexableAttrTxID, blkstorage.IndexableAttrTxValidationCode, blkstorage.IndexableAttrBlockTxID)
 	}
-	return &blockIndex{indexItemsMap, db}, nil
+
+	return &blockIndex{indexItemsMap: indexItemsMap, db: db, cache: make(map[string][]byte), batchSize: batchSize, pendingBatch: 0}, nil
+}
+
+func (index *blockIndex) getFromCacheOrDB(key []byte) ([]byte, error) {
+
+	rwLock.RLock()
+
+	b, ok := index.cache[string(key)]
+
+	rwLock.RUnlock()
+
+	if !ok {
+
+		var err error
+
+		b, err = index.db.Get(key)
+
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	return b, nil
 }
 
 func (index *blockIndex) getLastBlockIndexed() (uint64, error) {
+
 	var blockNumBytes []byte
 	var err error
-	if blockNumBytes, err = index.db.Get(indexCheckpointKey); err != nil {
+	if blockNumBytes, err = index.getFromCacheOrDB(indexCheckpointKey); err != nil {
 		return 0, err
 	}
 	if blockNumBytes == nil {
@@ -97,20 +126,21 @@ func (index *blockIndex) indexBlock(blockIdxInfo *blockIdxInfo) error {
 	flp := blockIdxInfo.flp
 	txOffsets := blockIdxInfo.txOffsets
 	txsfltr := ledgerUtil.TxValidationFlags(blockIdxInfo.metadata.Metadata[common.BlockMetadataIndex_TRANSACTIONS_FILTER])
-	batch := leveldbhelper.NewUpdateBatch()
 	flpBytes, err := flp.marshal()
 	if err != nil {
 		return err
 	}
 
+	update := make(map[string][]byte)
+
 	//Index1
 	if _, ok := index.indexItemsMap[blkstorage.IndexableAttrBlockHash]; ok {
-		batch.Put(constructBlockHashKey(blockIdxInfo.blockHash), flpBytes)
+		update[string(constructBlockHashKey(blockIdxInfo.blockHash))] = flpBytes
 	}
 
 	//Index2
 	if _, ok := index.indexItemsMap[blkstorage.IndexableAttrBlockNum]; ok {
-		batch.Put(constructBlockNumKey(blockIdxInfo.blockNum), flpBytes)
+		update[string(constructBlockNumKey(blockIdxInfo.blockNum))] = flpBytes
 	}
 
 	//Index3 Used to find a transaction by it's transaction id
@@ -130,7 +160,8 @@ func (index *blockIndex) indexBlock(blockIdxInfo *blockIdxInfo) error {
 			if marshalErr != nil {
 				return marshalErr
 			}
-			batch.Put(constructTxIDKey(txoffset.txID), txFlpBytes)
+			update[string(constructTxIDKey(txoffset.txID))] = txFlpBytes
+
 		}
 	}
 
@@ -143,7 +174,7 @@ func (index *blockIndex) indexBlock(blockIdxInfo *blockIdxInfo) error {
 			if marshalErr != nil {
 				return marshalErr
 			}
-			batch.Put(constructBlockNumTranNumKey(blockIdxInfo.blockNum, uint64(txIterator)), txFlpBytes)
+			update[string(constructBlockNumTranNumKey(blockIdxInfo.blockNum, uint64(txIterator)))] = txFlpBytes
 		}
 	}
 
@@ -153,7 +184,7 @@ func (index *blockIndex) indexBlock(blockIdxInfo *blockIdxInfo) error {
 			if txoffset.isDuplicate { // do not overwrite txid entry in the index - FAB-8557
 				continue
 			}
-			batch.Put(constructBlockTxIDKey(txoffset.txID), flpBytes)
+			update[string(constructBlockTxIDKey(txoffset.txID))] = flpBytes
 		}
 	}
 
@@ -163,15 +194,47 @@ func (index *blockIndex) indexBlock(blockIdxInfo *blockIdxInfo) error {
 			if txoffset.isDuplicate { // do not overwrite txid entry in the index - FAB-8557
 				continue
 			}
-			batch.Put(constructTxValidationCodeIDKey(txoffset.txID), []byte{byte(txsfltr.Flag(idx))})
+			update[string(constructTxValidationCodeIDKey(txoffset.txID))] = []byte{byte(txsfltr.Flag(idx))}
 		}
 	}
 
-	batch.Put(indexCheckpointKey, encodeBlockNum(blockIdxInfo.blockNum))
+	update[string(indexCheckpointKey)] = encodeBlockNum(blockIdxInfo.blockNum)
+
+	rwLock.Lock()
+
+	for k, v := range update {
+		index.cache[k] = v
+	}
+
+	index.pendingBatch++
+
+	if index.pendingBatch >= index.batchSize {
+
+		toBeWritten := make(map[string][]byte)
+
+		for k, v := range index.cache {
+			toBeWritten[k] = v
+		}
+
+		index.pendingBatch = 0
+		index.cache = make(map[string][]byte)
+
+		rwLock.Unlock()
+
+		return index.writeOut(toBeWritten)
+	}
+
+	rwLock.Unlock()
+
+	return nil
+}
+
+func (index *blockIndex) writeOut(data map[string][]byte) error {
 	// Setting snyc to true as a precaution, false may be an ok optimization after further testing.
-	if err := index.db.WriteBatch(batch, true); err != nil {
+	if err := index.db.WriteBatch(&leveldbhelper.UpdateBatch{KVs: data}, true); err != nil {
 		return err
 	}
+
 	return nil
 }
 
@@ -201,7 +264,8 @@ func (index *blockIndex) getBlockLocByHash(blockHash []byte) (*fileLocPointer, e
 	if _, ok := index.indexItemsMap[blkstorage.IndexableAttrBlockHash]; !ok {
 		return nil, blkstorage.ErrAttrNotIndexed
 	}
-	b, err := index.db.Get(constructBlockHashKey(blockHash))
+
+	b, err := index.getFromCacheOrDB(constructBlockHashKey(blockHash))
 	if err != nil {
 		return nil, err
 	}
@@ -214,10 +278,11 @@ func (index *blockIndex) getBlockLocByHash(blockHash []byte) (*fileLocPointer, e
 }
 
 func (index *blockIndex) getBlockLocByBlockNum(blockNum uint64) (*fileLocPointer, error) {
+
 	if _, ok := index.indexItemsMap[blkstorage.IndexableAttrBlockNum]; !ok {
 		return nil, blkstorage.ErrAttrNotIndexed
 	}
-	b, err := index.db.Get(constructBlockNumKey(blockNum))
+	b, err := index.getFromCacheOrDB(constructBlockNumKey(blockNum))
 	if err != nil {
 		return nil, err
 	}
@@ -230,10 +295,11 @@ func (index *blockIndex) getBlockLocByBlockNum(blockNum uint64) (*fileLocPointer
 }
 
 func (index *blockIndex) getTxLoc(txID string) (*fileLocPointer, error) {
+
 	if _, ok := index.indexItemsMap[blkstorage.IndexableAttrTxID]; !ok {
 		return nil, blkstorage.ErrAttrNotIndexed
 	}
-	b, err := index.db.Get(constructTxIDKey(txID))
+	b, err := index.getFromCacheOrDB(constructTxIDKey(txID))
 	if err != nil {
 		return nil, err
 	}
@@ -246,10 +312,11 @@ func (index *blockIndex) getTxLoc(txID string) (*fileLocPointer, error) {
 }
 
 func (index *blockIndex) getBlockLocByTxID(txID string) (*fileLocPointer, error) {
+
 	if _, ok := index.indexItemsMap[blkstorage.IndexableAttrBlockTxID]; !ok {
 		return nil, blkstorage.ErrAttrNotIndexed
 	}
-	b, err := index.db.Get(constructBlockTxIDKey(txID))
+	b, err := index.getFromCacheOrDB(constructBlockTxIDKey(txID))
 	if err != nil {
 		return nil, err
 	}
@@ -262,10 +329,11 @@ func (index *blockIndex) getBlockLocByTxID(txID string) (*fileLocPointer, error)
 }
 
 func (index *blockIndex) getTXLocByBlockNumTranNum(blockNum uint64, tranNum uint64) (*fileLocPointer, error) {
+
 	if _, ok := index.indexItemsMap[blkstorage.IndexableAttrBlockNumTranNum]; !ok {
 		return nil, blkstorage.ErrAttrNotIndexed
 	}
-	b, err := index.db.Get(constructBlockNumTranNumKey(blockNum, tranNum))
+	b, err := index.getFromCacheOrDB(constructBlockNumTranNumKey(blockNum, tranNum))
 	if err != nil {
 		return nil, err
 	}
@@ -278,11 +346,12 @@ func (index *blockIndex) getTXLocByBlockNumTranNum(blockNum uint64, tranNum uint
 }
 
 func (index *blockIndex) getTxValidationCodeByTxID(txID string) (peer.TxValidationCode, error) {
+
 	if _, ok := index.indexItemsMap[blkstorage.IndexableAttrTxValidationCode]; !ok {
 		return peer.TxValidationCode(-1), blkstorage.ErrAttrNotIndexed
 	}
 
-	raw, err := index.db.Get(constructTxValidationCodeIDKey(txID))
+	raw, err := index.getFromCacheOrDB(constructTxValidationCodeIDKey(txID))
 
 	if err != nil {
 		return peer.TxValidationCode(-1), err

@@ -447,7 +447,7 @@ func (e *Endorser) ProcessProposal(ctx context.Context, signedProp *pb.SignedPro
 		}
 
 		if config.Log.Endorsement {
-			fmt.Printf("end,%d,%d\n", time.Now().UnixNano()/1000000, time.Since(startTime).Nanoseconds())
+			fmt.Printf("end,%d,%d\n", time.Now().UnixNano(), time.Since(startTime).Nanoseconds())
 		}
 
 		endorserLogger.Debug("Exit: request from", addr)

@@ -144,6 +144,10 @@ func (n *node) run(campaign bool) {
 			// to the followers and them writing to their disks. Check 10.2.1 in thesis
 			n.send(rd.Messages)
 
+			//if config.Log.Ordering {
+			//	fmt.Printf("ord1,%d,%d\n", time.Now().UnixNano(), rd.CommittedEntries[0].Index)
+			//}
+
 		case <-n.chain.haltC:
 			raftTicker.Stop()
 			n.Stop()

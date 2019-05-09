@@ -8,7 +8,9 @@ package pvtdatastorage
 
 import (
 	"fmt"
+	"os"
 	"sort"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -37,6 +39,8 @@ type store struct {
 	isEmpty            bool
 	lastCommittedBlock uint64
 	batchPending       bool
+	currentBatch       int
+	batchSize          int
 	purgerLock         sync.Mutex
 	collElgProcSync    *collElgProcSync
 	// After committing the pvtdata of old blocks,
@@ -49,6 +53,7 @@ type store struct {
 	// in the stateDB needs to be updated before finishing the
 	// recovery operation.
 	isLastUpdatedOldBlocksSet bool
+	batchToWrite              bool
 }
 
 type blkTranNumKey []byte
@@ -127,6 +132,13 @@ func (p *provider) OpenStore(ledgerid string) (Store, error) {
 	s.launchCollElgProc()
 	logger.Debugf("Pvtdata store opened. Initial state: isEmpty [%t], lastCommittedBlock [%d], batchPending [%t]",
 		s.isEmpty, s.lastCommittedBlock, s.batchPending)
+
+	strBatchSize := os.Getenv("STREAMCHAIN_WRITEBATCH")
+
+	if strBatchSize == "" || strBatchSize == "0" {
+		s.batchSize, _ = strconv.Atoi(strBatchSize)
+	}
+
 	return s, nil
 }
 
@@ -161,6 +173,10 @@ func (s *store) Init(btlPolicy pvtdatapolicy.BTLPolicy) {
 	s.btlPolicy = btlPolicy
 }
 
+func (s *storeEntries) isEmpty() bool {
+	return len(s.dataEntries)&len(s.expiryEntries)&len(s.missingDataEntries) == 0
+}
+
 // Prepare implements the function in the interface `Store`
 func (s *store) Prepare(blockNum uint64, pvtData []*ledger.TxPvtData, missingPvtData ledger.TxMissingPvtDataMap) error {
 	if s.batchPending {
@@ -172,7 +188,6 @@ func (s *store) Prepare(blockNum uint64, pvtData []*ledger.TxPvtData, missingPvt
 		return &ErrIllegalArgs{fmt.Sprintf("Expected block number=%d, recived block number=%d", expectedBlockNum, blockNum)}
 	}
 
-	batch := leveldbhelper.NewUpdateBatch()
 	var err error
 	var keyBytes, valBytes []byte
 
@@ -181,34 +196,42 @@ func (s *store) Prepare(blockNum uint64, pvtData []*ledger.TxPvtData, missingPvt
 		return err
 	}
 
-	for _, dataEntry := range storeEntries.dataEntries {
-		keyBytes = encodeDataKey(dataEntry.key)
-		if valBytes, err = encodeDataValue(dataEntry.value); err != nil {
+	if !storeEntries.isEmpty() || s.currentBatch == s.batchSize {
+		s.batchToWrite = true
+
+		batch := leveldbhelper.NewUpdateBatch()
+
+		for _, dataEntry := range storeEntries.dataEntries {
+			keyBytes = encodeDataKey(dataEntry.key)
+			if valBytes, err = encodeDataValue(dataEntry.value); err != nil {
+				return err
+			}
+			batch.Put(keyBytes, valBytes)
+		}
+
+		for _, expiryEntry := range storeEntries.expiryEntries {
+			keyBytes = encodeExpiryKey(expiryEntry.key)
+			if valBytes, err = encodeExpiryValue(expiryEntry.value); err != nil {
+				return err
+			}
+			batch.Put(keyBytes, valBytes)
+		}
+
+		for missingDataKey, missingDataValue := range storeEntries.missingDataEntries {
+			keyBytes = encodeMissingDataKey(&missingDataKey)
+			if valBytes, err = encodeMissingDataValue(missingDataValue); err != nil {
+				return err
+			}
+			batch.Put(keyBytes, valBytes)
+		}
+
+		batch.Put(pendingCommitKey, emptyValue)
+
+		if err := s.db.WriteBatch(batch, true); err != nil {
 			return err
 		}
-		batch.Put(keyBytes, valBytes)
 	}
 
-	for _, expiryEntry := range storeEntries.expiryEntries {
-		keyBytes = encodeExpiryKey(expiryEntry.key)
-		if valBytes, err = encodeExpiryValue(expiryEntry.value); err != nil {
-			return err
-		}
-		batch.Put(keyBytes, valBytes)
-	}
-
-	for missingDataKey, missingDataValue := range storeEntries.missingDataEntries {
-		keyBytes = encodeMissingDataKey(&missingDataKey)
-		if valBytes, err = encodeMissingDataValue(missingDataValue); err != nil {
-			return err
-		}
-		batch.Put(keyBytes, valBytes)
-	}
-
-	batch.Put(pendingCommitKey, emptyValue)
-	if err := s.db.WriteBatch(batch, true); err != nil {
-		return err
-	}
 	s.batchPending = true
 	logger.Debugf("Saved %d private data write sets for block [%d]", len(pvtData), blockNum)
 	return nil
@@ -221,12 +244,21 @@ func (s *store) Commit() error {
 	}
 	committingBlockNum := s.nextBlockNum()
 	logger.Debugf("Committing private data for block [%d]", committingBlockNum)
-	batch := leveldbhelper.NewUpdateBatch()
-	batch.Delete(pendingCommitKey)
-	batch.Put(lastCommittedBlkkey, encodeLastCommittedBlockVal(committingBlockNum))
-	if err := s.db.WriteBatch(batch, true); err != nil {
-		return err
+
+	if s.batchToWrite {
+
+		batch := leveldbhelper.NewUpdateBatch()
+
+		batch.Delete(pendingCommitKey)
+		batch.Put(lastCommittedBlkkey, encodeLastCommittedBlockVal(committingBlockNum))
+
+		if err := s.db.WriteBatch(batch, true); err != nil {
+			return err
+		}
+		s.batchToWrite = false
+		s.currentBatch = 0
 	}
+	s.currentBatch++
 	s.batchPending = false
 	s.isEmpty = false
 	s.lastCommittedBlock = committingBlockNum

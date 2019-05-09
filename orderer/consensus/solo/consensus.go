@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/hyperledger/fabric/common/flogging"
+	"github.com/hyperledger/fabric/config"
 	"github.com/hyperledger/fabric/orderer/consensus"
 	"github.com/hyperledger/fabric/orderer/consensus/migration"
 	cb "github.com/hyperledger/fabric/protos/common"
@@ -129,6 +130,10 @@ func (ch *chain) main() {
 				for _, batch := range batches {
 					block := ch.support.CreateNextBlock(batch)
 					ch.support.WriteBlock(block, nil)
+
+					if config.Log.Ordering {
+						fmt.Printf("ord1,%d,%d\n", time.Now().UnixNano(), block.Header.Number)
+					}
 				}
 
 				switch {

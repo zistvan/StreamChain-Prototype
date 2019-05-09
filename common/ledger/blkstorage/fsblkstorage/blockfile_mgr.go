@@ -128,14 +128,13 @@ func newBlockfileMgr(id string, conf *Conf, indexConfig *blkstorage.IndexConfig,
 
 	strBatchSize := os.Getenv("STREAMCHAIN_WRITEBATCH")
 
-	var bfw *batchedBlockfileWriter
+	bsz := 0
 
-	if strBatchSize == "" || strBatchSize == "0" {
-		bfw = newBatchedBlockFileWriter(currentFileWriter, 0)
-	} else {
-		bsz, _ := strconv.Atoi(strBatchSize)
-		bfw = newBatchedBlockFileWriter(currentFileWriter, bsz)
+	if strBatchSize != "" && strBatchSize != "0" {
+		bsz, _ = strconv.Atoi(strBatchSize)
 	}
+
+	bfw := newBatchedBlockFileWriter(currentFileWriter, bsz)
 
 	if err != nil {
 		panic(fmt.Sprintf("Could not open writer to current file: %s", err))
@@ -147,7 +146,7 @@ func newBlockfileMgr(id string, conf *Conf, indexConfig *blkstorage.IndexConfig,
 	}
 
 	// Create a new KeyValue store database handler for the blocks index in the keyvalue database
-	if mgr.index, err = newBlockIndex(indexConfig, indexStore); err != nil {
+	if mgr.index, err = newBlockIndex(indexConfig, indexStore, bsz); err != nil {
 		panic(fmt.Sprintf("error in block index: %s", err))
 	}
 
@@ -327,12 +326,13 @@ func (mgr *blockfileMgr) addBlock(block *common.Block) error {
 		txOffset.loc.offset += len(blockBytesEncodedLen)
 	}
 	//save the index in the database
+	//start := time.Now()
 	if err = mgr.index.indexBlock(&blockIdxInfo{
 		blockNum: block.Header.Number, blockHash: blockHash,
 		flp: blockFLP, txOffsets: txOffsets, metadata: block.Metadata}); err != nil {
 		return err
 	}
-
+	//logger.Errorf("Indexing: %.2f", time.Since(start).Seconds()*1000)
 	//update the checkpoint info (for storage) and the blockchain info (for APIs) in the manager
 	mgr.updateCheckpoint(newCPInfo)
 	mgr.updateBlockchainInfo(blockHash, block)

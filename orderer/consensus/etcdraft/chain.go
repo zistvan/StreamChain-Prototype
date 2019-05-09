@@ -18,6 +18,7 @@ import (
 	"github.com/golang/protobuf/proto"
 	"github.com/hyperledger/fabric/common/configtx"
 	"github.com/hyperledger/fabric/common/flogging"
+	"github.com/hyperledger/fabric/config"
 	"github.com/hyperledger/fabric/orderer/common/cluster"
 	"github.com/hyperledger/fabric/orderer/consensus"
 	"github.com/hyperledger/fabric/orderer/consensus/migration"
@@ -1058,7 +1059,6 @@ func (c *Chain) apply(ents []raftpb.Entry) {
 			if len(ents[i].Data) == 0 {
 				break
 			}
-
 			position = i
 			c.accDataSize += uint32(len(ents[i].Data))
 
@@ -1072,6 +1072,10 @@ func (c *Chain) apply(ents []raftpb.Entry) {
 			block := utils.UnmarshalBlockOrPanic(ents[i].Data)
 			c.writeBlock(block, ents[i].Index)
 			c.Metrics.CommittedBlockNumber.Set(float64(block.Header.Number))
+
+			if config.Log.Ordering {
+				fmt.Printf("ord1,%d,%d\n", time.Now().UnixNano(), block.Header.Number)
+			}
 
 		case raftpb.EntryConfChange:
 			var cc raftpb.ConfChange

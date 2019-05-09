@@ -41,6 +41,7 @@ type Peer struct {
 	TLS                    *TLS            `yaml:"tls,omitempty"`
 	Authentication         *Authentication `yaml:"authentication,omitempty"`
 	FileSystemPath         string          `yaml:"fileSystemPath,omitempty"`
+	StateDBPath            string          `yaml:"stateDBPath,omitempty"`
 	BCCSP                  *BCCSP          `yaml:"BCCSP,omitempty"`
 	MSPConfigPath          string          `yaml:"mspConfigPath,omitempty"`
 	LocalMSPID             string          `yaml:"localMspId,omitempty"`

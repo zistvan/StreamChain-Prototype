@@ -16,12 +16,12 @@ func newNoopMsp(mInst *bccspmsp) MSP {
 	return &noopmsp{mInst}
 }
 
-func (m *noopmsp) Setup(conf1 *msp.MSPConfig) error {
-	return m.wrappedMsp.Setup(conf1)
+func (m *noopmsp) Setup(conf *msp.MSPConfig) error {
+	return m.wrappedMsp.Setup(conf)
 }
 
 func (m *noopmsp) GetVersion() MSPVersion {
-	return MSPv1_3
+	return m.wrappedMsp.version
 }
 
 func (m *noopmsp) GetType() ProviderType {

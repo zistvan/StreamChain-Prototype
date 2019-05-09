@@ -311,7 +311,6 @@ func (l *kvLedger) CommitWithPvtData(pvtdataAndBlock *ledger.BlockAndPvtData) er
 	}
 
 	elapsedBlockProcessing := time.Since(startBlockProcessing)
-
 	startCommitBlockStorage := time.Now()
 	logger.Debugf("[%s] Committing block [%d] to storage", l.ledgerID, blockNo)
 	l.blockAPIsRWLock.Lock()
@@ -320,14 +319,12 @@ func (l *kvLedger) CommitWithPvtData(pvtdataAndBlock *ledger.BlockAndPvtData) er
 		return err
 	}
 	elapsedCommitBlockStorage := time.Since(startCommitBlockStorage)
-
 	startCommitState := time.Now()
 	logger.Debugf("[%s] Committing block [%d] transactions to state database", l.ledgerID, blockNo)
 	if err = l.txtmgmt.Commit(); err != nil {
 		panic(errors.WithMessage(err, "error during commit to txmgr"))
 	}
 	elapsedCommitState := time.Since(startCommitState)
-
 	// History database could be written in parallel with state and/or async as a future optimization,
 	// although it has not been a bottleneck...no need to clutter the log with elapsed duration.
 	if ledgerconfig.IsHistoryDBEnabled() {
@@ -336,7 +333,6 @@ func (l *kvLedger) CommitWithPvtData(pvtdataAndBlock *ledger.BlockAndPvtData) er
 			panic(errors.WithMessage(err, "Error during commit to history db"))
 		}
 	}
-
 	elapsedCommitWithPvtData := time.Since(startBlockProcessing)
 
 	logger.Infof("[%s] Committed block [%d] with %d transaction(s) in %dms (state_validation=%dms block_commit=%dms state_commit=%dms)",

@@ -98,9 +98,10 @@ func getChaincodeSpec(cmd *cobra.Command) (*pb.ChaincodeSpec, error) {
 }
 
 type WorkloadEntry struct {
-	endorserEndpoint string
-	orderingEndpoint string
-	chaincodeSpec    *pb.ChaincodeSpec
+	endorserEndpoint   string
+	orderingEndpoint   string
+	orderingCaFilePath string
+	chaincodeSpec      *pb.ChaincodeSpec
 }
 
 func parseWorkload(cmd *cobra.Command) ([]*WorkloadEntry, error) {
@@ -128,13 +129,11 @@ func parseWorkload(cmd *cobra.Command) ([]*WorkloadEntry, error) {
 		input := &pb.ChaincodeInput{}
 		text := scanner.Text()
 		fields := strings.Fields(text)
-		if err := json.Unmarshal([]byte(fields[2]), &input); err != nil {
+		if err := json.Unmarshal([]byte(fields[3]), &input); err != nil {
 			return nil, fmt.Errorf("Chaincode argument error: %s", err)
 		}
 		chaincodeLang = strings.ToUpper(chaincodeLang)
-		if pb.ChaincodeSpec_Type_value[chaincodeLang] == int32(pb.ChaincodeSpec_JAVA) {
-			return nil, fmt.Errorf("Java chaincode is work-in-progress and disabled")
-		}
+
 		spec = &pb.ChaincodeSpec{
 			Type:        pb.ChaincodeSpec_Type(pb.ChaincodeSpec_Type_value[chaincodeLang]),
 			ChaincodeId: &pb.ChaincodeID{Path: chaincodePath, Name: chaincodeName, Version: chaincodeVersion},
@@ -143,6 +142,7 @@ func parseWorkload(cmd *cobra.Command) ([]*WorkloadEntry, error) {
 		workloadEntry.chaincodeSpec = spec
 		workloadEntry.endorserEndpoint = fields[1]
 		workloadEntry.orderingEndpoint = fields[0]
+		workloadEntry.orderingCaFilePath = fields[2]
 		workload = append(workload, workloadEntry)
 	}
 
@@ -210,7 +210,10 @@ func chaincodeInvokeOrQuery(cmd *cobra.Command, invoke bool, cf *ChaincodeCmdFac
 			if broadcastClient, ok := broadcastClientsMap[orderingEndpoint]; ok {
 				broadcastClients[i] = broadcastClient
 			} else {
-				broadcastClient, err := common.GetBroadcastClientFnc()
+				viper.Set("orderer.address", workloadEntry.orderingEndpoint)
+				viper.Set("orderer.tls.rootcert.file", workloadEntry.orderingCaFilePath)
+				broadcastClient, err = common.GetBroadcastClientFnc()
+
 				if err != nil {
 					res <- fmt.Errorf("Error getting broadcast client: %s", err)
 					return

@@ -129,7 +129,7 @@ func (s *Store) CommitWithPvtData(blockAndPvtdata *ledger.BlockAndPvtData) error
 	} else {
 		logger.Debugf("Skipping writing block [%d] to pvt block store as the store height is [%d]", blockNum, pvtBlkStoreHt)
 	}
-
+	//start := time.Now()
 	strAddBlock := os.Getenv("STREAMCHAIN_ADDBLOCK")
 
 	if blockAndPvtdata.Block.Header.Number < 10 || strAddBlock == "" || strAddBlock == "true" {
@@ -138,9 +138,10 @@ func (s *Store) CommitWithPvtData(blockAndPvtdata *ledger.BlockAndPvtData) error
 			return err
 		}
 	}
-
+	//logger.Errorf("Block Add: %f", time.Since(start).Seconds()*1000)
 	if writtenToPvtStore {
-		return s.pvtdataStore.Commit()
+		err := s.pvtdataStore.Commit()
+		return err
 	}
 	return nil
 }
