@@ -26,6 +26,7 @@ import (
 	"github.com/hyperledger/fabric/core/ledger/ledgerconfig"
 	"github.com/hyperledger/fabric/core/ledger/ledgerstorage"
 	"github.com/hyperledger/fabric/core/ledger/pvtdatapolicy"
+	fastfabric_extensions "github.com/hyperledger/fabric/fastfabric-extensions"
 	"github.com/hyperledger/fabric/protos/common"
 	"github.com/hyperledger/fabric/protos/peer"
 	"github.com/pkg/errors"
@@ -199,6 +200,10 @@ func (l *kvLedger) recommitLostBlocks(firstBlockNum uint64, lastBlockNum uint64,
 	}
 	logger.Infof("Recommitted lost blocks - firstBlockNum=%d, lastBlockNum=%d, recoverables=%#v", firstBlockNum, lastBlockNum, recoverables)
 	return nil
+}
+
+func (l *kvLedger) GetBlockstore() (store fastfabric_extensions.BlockStore) {
+	return l.blockStore
 }
 
 // GetTransactionByID retrieves a transaction by id

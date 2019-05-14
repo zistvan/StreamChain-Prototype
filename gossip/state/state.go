@@ -14,6 +14,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/hyperledger/fabric/fastfabric-extensions/cached"
+
 	pb "github.com/golang/protobuf/proto"
 	"github.com/hyperledger/fabric/gossip/api"
 	"github.com/hyperledger/fabric/gossip/comm"
@@ -24,6 +26,7 @@ import (
 	proto "github.com/hyperledger/fabric/protos/gossip"
 	"github.com/hyperledger/fabric/protos/ledger/rwset"
 	"github.com/hyperledger/fabric/protos/transientstore"
+	"github.com/hyperledger/fabric/protos/utils"
 	"github.com/pkg/errors"
 	"github.com/spf13/viper"
 )
@@ -91,7 +94,7 @@ type MCSAdapter interface {
 	// VerifyBlock returns nil if the block is properly signed, and the claimed seqNum is the
 	// sequence number that the block's header contains.
 	// else returns error
-	VerifyBlock(chainID common2.ChainID, seqNum uint64, signedBlock []byte) error
+	VerifyBlock(chainID common2.ChainID, seqNum uint64, signedBlock *cached.Block) error
 
 	// VerifyByChannel checks that signature is a valid signature of message
 	// under a peer's verification key, but also in the context of a specific channel.
@@ -104,9 +107,9 @@ type MCSAdapter interface {
 type ledgerResources interface {
 	// StoreBlock deliver new block with underlined private data
 	// returns missing transaction ids
-	StoreBlock(block *common.Block, data util.PvtDataCollections) error
+	StoreBlock(block *cached.Block, data util.PvtDataCollections) error
 
-	VerifyBlock(block *common.Block, data util.PvtDataCollections) (*common.Block, error)
+	VerifyBlock(block *cached.Block, data util.PvtDataCollections) (*cached.Block, error)
 
 	// StorePvtData used to persist private date into transient store
 	StorePvtData(txid string, privData *transientstore.TxPvtReadWriteSetWithConfigInfo, blckHeight uint64) error
@@ -553,7 +556,11 @@ func (s *GossipStateProviderImpl) handleStateResponse(msg proto.ReceivedMessage)
 	}
 	for _, payload := range response.GetPayloads() {
 		logger.Debugf("Received payload with sequence number %d.", payload.SeqNum)
-		if err := s.mediator.VerifyBlock(common2.ChainID(s.chainID), payload.SeqNum, payload.Data); err != nil {
+		rawBlock, err := utils.GetBlockFromBlockBytes(payload.Data)
+		if err == nil {
+			err = s.mediator.VerifyBlock(common2.ChainID(s.chainID), payload.SeqNum, cached.GetBlock(rawBlock))
+		}
+		if err == nil {
 			err = errors.WithStack(err)
 			logger.Warningf("Error verifying block with sequence number %d, due to %+v", payload.SeqNum, err)
 			return uint64(0), err
@@ -562,7 +569,7 @@ func (s *GossipStateProviderImpl) handleStateResponse(msg proto.ReceivedMessage)
 			max = payload.SeqNum
 		}
 
-		err := s.addPayload(payload, blocking)
+		err = s.addPayload(payload, blocking)
 		if err != nil {
 			logger.Warningf("Block [%d] received from block transfer wasn't added to payload buffer: %v", payload.SeqNum, err)
 		}
@@ -608,7 +615,7 @@ func (s *GossipStateProviderImpl) queueNewMessage(msg *proto.GossipMessage) {
 
 //used in the pipelining
 type PipelineData struct {
-	block           *common.Block
+	block           *cached.Block
 	privateDataSets util.PvtDataCollections
 	seq             uint64
 }
@@ -701,7 +708,7 @@ func (s *GossipStateProviderImpl) deliverPayloads() {
 					}
 				}
 
-				job := &PipelineData{rawBlock, p, payload.SeqNum}
+				job := &PipelineData{cached.GetBlock(rawBlock), p, payload.SeqNum}
 
 				if pipeline {
 					inChans[reqSeq] <- job
@@ -713,6 +720,9 @@ func (s *GossipStateProviderImpl) deliverPayloads() {
 					newBlock, _ := s.ledger.VerifyBlock(job.block, job.privateDataSets)
 					job.block = newBlock
 					s.ledger.StoreBlock(job.block, job.privateDataSets)
+					s.mediator.UpdateLedgerHeight(job.block.Header.Number+1, common2.ChainID(s.chainID))
+					logger.Debugf("[%s] Committed block [%d] with %d transaction(s)",
+						s.chainID, job.block.Header.Number, len(job.block.Data.Data))
 				}
 			}
 		case <-s.stopCh:
@@ -921,7 +931,7 @@ func (s *GossipStateProviderImpl) addPayload(payload *proto.Payload, blockingMod
 func (s *GossipStateProviderImpl) commitBlock(block *common.Block, pvtData util.PvtDataCollections) error {
 
 	// Commit block with available private transactions
-	if err := s.ledger.StoreBlock(block, pvtData); err != nil {
+	if err := s.ledger.StoreBlock(cached.GetBlock(block), pvtData); err != nil {
 		logger.Errorf("Got error while committing(%+v)", errors.WithStack(err))
 		return err
 	}

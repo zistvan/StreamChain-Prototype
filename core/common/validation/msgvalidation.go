@@ -22,6 +22,7 @@ import (
 	"github.com/golang/protobuf/proto"
 	"github.com/hyperledger/fabric/common/channelconfig"
 	"github.com/hyperledger/fabric/common/flogging"
+	"github.com/hyperledger/fabric/fastfabric-extensions/cached"
 	mspmgmt "github.com/hyperledger/fabric/msp/mgmt"
 	"github.com/hyperledger/fabric/protos/common"
 	"github.com/hyperledger/fabric/protos/msp"
@@ -91,9 +92,9 @@ func ValidateProposalMessage(signedProp *pb.SignedProposal) (*pb.Proposal, *comm
 	if err != nil {
 		return nil, nil, nil, err
 	}
-
+	uhdr := &cached.Header{Header: hdr}
 	// validate the header
-	chdr, shdr, err := validateCommonHeader(hdr)
+	chdr, shdr, err := validateCommonHeader(uhdr)
 	if err != nil {
 		return nil, nil, nil, err
 	}
@@ -211,9 +212,9 @@ func validateSignatureHeader(sHdr *common.SignatureHeader) error {
 }
 
 // checks for a valid ChannelHeader
-func validateChannelHeader(cHdr *common.ChannelHeader) error {
+func validateChannelHeader(cHdr *cached.ChannelHeader) error {
 	// check for nil argument
-	if cHdr == nil {
+	if cHdr.ChannelHeader == nil {
 		return errors.New("nil ChannelHeader provided")
 	}
 
@@ -243,17 +244,17 @@ func validateChannelHeader(cHdr *common.ChannelHeader) error {
 }
 
 // checks for a valid Header
-func validateCommonHeader(hdr *common.Header) (*common.ChannelHeader, *common.SignatureHeader, error) {
-	if hdr == nil {
+func validateCommonHeader(hdr *cached.Header) (*cached.ChannelHeader, *common.SignatureHeader, error) {
+	if hdr.Header == nil {
 		return nil, nil, errors.New("nil header")
 	}
 
-	chdr, err := utils.UnmarshalChannelHeader(hdr.ChannelHeader)
+	chdr, err := hdr.UnmarshalChannelHeader()
 	if err != nil {
 		return nil, nil, err
 	}
 
-	shdr, err := utils.GetSignatureHeader(hdr.SignatureHeader)
+	shdr, err := hdr.UnmarshalSignatureHeader()
 	if err != nil {
 		return nil, nil, err
 	}
@@ -288,22 +289,22 @@ func validateConfigTransaction(data []byte, hdr *common.Header) error {
 
 // validateEndorserTransaction validates the payload of a
 // transaction assuming its type is ENDORSER_TRANSACTION
-func validateEndorserTransaction(data []byte, hdr *common.Header) error {
-	putilsLogger.Debugf("validateEndorserTransaction starts for data %p, header %s", data, hdr)
+func validateEndorserTransaction(pl *cached.Payload, hdr *cached.Header) error {
+	putilsLogger.Debugf("validateEndorserTransaction starts for data %p, header %s", pl.Data, hdr)
 
 	// check for nil argument
-	if data == nil || hdr == nil {
+	if pl.Data == nil || hdr == nil {
 		return errors.New("nil arguments")
 	}
 
 	// if the type is ENDORSER_TRANSACTION we unmarshal a Transaction message
-	tx, err := utils.GetTransaction(data)
+	tx, err := pl.UnmarshalTransaction()
 	if err != nil {
 		return err
 	}
 
 	// check for nil argument
-	if tx == nil {
+	if tx.Transaction == nil {
 		return errors.New("nil transaction")
 	}
 
@@ -320,12 +321,12 @@ func validateEndorserTransaction(data []byte, hdr *common.Header) error {
 
 	for _, act := range tx.Actions {
 		// check for nil argument
-		if act == nil {
+		if act.TransactionAction == nil {
 			return errors.New("nil action")
 		}
 
 		// if the type is ENDORSER_TRANSACTION we unmarshal a SignatureHeader
-		sHdr, err := utils.GetSignatureHeader(act.Header)
+		sHdr, err := act.UnmarshalSignatureHeader()
 		if err != nil {
 			return err
 		}
@@ -340,13 +341,13 @@ func validateEndorserTransaction(data []byte, hdr *common.Header) error {
 		putilsLogger.Debugf("validateEndorserTransaction info: signature header is valid")
 
 		// if the type is ENDORSER_TRANSACTION we unmarshal a ChaincodeActionPayload
-		ccActionPayload, err := utils.GetChaincodeActionPayload(act.Payload)
+		ccActionPayload, err := act.UnmarshalChaincodeActionPayload()
 		if err != nil {
 			return err
 		}
 
 		// extract the proposal response payload
-		prp, err := utils.GetProposalResponsePayload(ccActionPayload.Action.ProposalResponsePayload)
+		prp, err := ccActionPayload.Action.UnmarshalProposalResponsePayload()
 		if err != nil {
 			return err
 		}
@@ -371,17 +372,17 @@ func validateEndorserTransaction(data []byte, hdr *common.Header) error {
 }
 
 // ValidateTransaction checks that the transaction envelope is properly formed
-func ValidateTransaction(e *common.Envelope, c channelconfig.ApplicationCapabilities) (*common.Payload, pb.TxValidationCode) {
+func ValidateTransaction(e *cached.Envelope, c channelconfig.ApplicationCapabilities) (*cached.Payload, pb.TxValidationCode) {
 	putilsLogger.Debugf("ValidateTransactionEnvelope starts for envelope %p", e)
 
 	// check for nil argument
-	if e == nil {
+	if e.Envelope == nil {
 		putilsLogger.Errorf("Error: nil envelope")
 		return nil, pb.TxValidationCode_NIL_ENVELOPE
 	}
 
 	// get the payload from the envelope
-	payload, err := utils.GetPayload(e)
+	payload, err := e.UnmarshalPayload()
 	if err != nil {
 		putilsLogger.Errorf("GetPayload returns err %s", err)
 		return nil, pb.TxValidationCode_BAD_PAYLOAD
@@ -421,7 +422,7 @@ func ValidateTransaction(e *common.Envelope, c channelconfig.ApplicationCapabili
 			return nil, pb.TxValidationCode_BAD_PROPOSAL_TXID
 		}
 
-		err = validateEndorserTransaction(payload.Data, payload.Header)
+		err = validateEndorserTransaction(payload, payload.Header)
 		putilsLogger.Debugf("ValidateTransactionEnvelope returns err %s", err)
 
 		if err != nil {
@@ -434,7 +435,7 @@ func ValidateTransaction(e *common.Envelope, c channelconfig.ApplicationCapabili
 		// Config transactions have signatures inside which will be validated, especially at genesis there may be no creator or
 		// signature on the outermost envelope
 
-		err = validateConfigTransaction(payload.Data, payload.Header)
+		err = validateConfigTransaction(payload.Data, payload.Header.Header)
 
 		if err != nil {
 			putilsLogger.Errorf("validateConfigTransaction returns err %s", err)

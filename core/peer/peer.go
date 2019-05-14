@@ -12,6 +12,8 @@ import (
 	"runtime"
 	"sync"
 
+	"github.com/hyperledger/fabric/fastfabric-extensions/cached"
+
 	"github.com/hyperledger/fabric/common/channelconfig"
 	cc "github.com/hyperledger/fabric/common/config"
 	"github.com/hyperledger/fabric/common/configtx"
@@ -385,12 +387,12 @@ func createChain(cid string, ledger ledger.PeerLedger, cb *common.Block, ccp ccp
 		*semaphore.Weighted
 	}{cs, validationWorkersSemaphore}
 	validator := txvalidator.NewTxValidator(cid, vcs, sccp, pm)
-	c := committer.NewLedgerCommitterReactive(ledger, func(block *common.Block) error {
-		chainID, err := utils.GetChainIDFromBlock(block)
+	c := committer.NewLedgerCommitterReactive(ledger, func(block *cached.Block) error {
+		chainID, err := block.GetChannelId()
 		if err != nil {
 			return err
 		}
-		return SetCurrConfigBlock(block, chainID)
+		return SetCurrConfigBlock(block.Block, chainID)
 	})
 
 	ordererAddresses := bundle.ChannelConfig().OrdererAddresses()
@@ -748,7 +750,7 @@ type fileLedgerBlockStore struct {
 	ledger.PeerLedger
 }
 
-func (flbs fileLedgerBlockStore) AddBlock(*common.Block) error {
+func (flbs fileLedgerBlockStore) AddBlock(*cached.Block) error {
 	return nil
 }
 

@@ -20,8 +20,8 @@ import (
 	"github.com/hyperledger/fabric/core/committer/txvalidator"
 	"github.com/hyperledger/fabric/core/common/privdata"
 	"github.com/hyperledger/fabric/core/ledger"
-	"github.com/hyperledger/fabric/core/ledger/kvledger/txmgmt/rwsetutil"
 	"github.com/hyperledger/fabric/core/transientstore"
+	"github.com/hyperledger/fabric/fastfabric-extensions/cached"
 	privdatacommon "github.com/hyperledger/fabric/gossip/privdata/common"
 	"github.com/hyperledger/fabric/gossip/util"
 	"github.com/hyperledger/fabric/protos/common"
@@ -76,9 +76,9 @@ type TransientStore interface {
 type Coordinator interface {
 	// StoreBlock deliver new block with underlined private data
 	// returns missing transaction ids
-	StoreBlock(block *common.Block, data util.PvtDataCollections) error
+	StoreBlock(block *cached.Block, data util.PvtDataCollections) error
 
-	VerifyBlock(block *common.Block, data util.PvtDataCollections) (*common.Block, error)
+	VerifyBlock(block *cached.Block, data util.PvtDataCollections) (*cached.Block, error)
 
 	// StorePvtData used to persist private data into transient store
 	StorePvtData(txid string, privData *transientstore2.TxPvtReadWriteSetWithConfigInfo, blckHeight uint64) error
@@ -144,7 +144,7 @@ func (c *coordinator) StorePvtData(txID string, privData *transientstore2.TxPvtR
 	return c.TransientStore.PersistWithConfig(txID, blkHeight, privData)
 }
 
-func (c *coordinator) VerifyBlock(block *common.Block, privateDataSets util.PvtDataCollections) (*common.Block, error) {
+func (c *coordinator) VerifyBlock(block *cached.Block, privateDataSets util.PvtDataCollections) (*cached.Block, error) {
 	if block.Data == nil {
 		return block, errors.New("Block data is empty")
 	}
@@ -168,7 +168,7 @@ func (c *coordinator) VerifyBlock(block *common.Block, privateDataSets util.PvtD
 }
 
 // StoreBlock stores block with private data into the ledger
-func (c *coordinator) StoreBlock(block *common.Block, privateDataSets util.PvtDataCollections) error {
+func (c *coordinator) StoreBlock(block *cached.Block, privateDataSets util.PvtDataCollections) error {
 
 	if config.Log.Validation {
 		fmt.Printf("val1,%d,%d\n", time.Now().UnixNano(), block.Header.Number)
@@ -376,7 +376,7 @@ func (c *coordinator) fetchFromTransientStore(txAndSeq txAndSeqInBlock, filter l
 }
 
 // computeOwnedRWsets identifies which block private data we already have
-func computeOwnedRWsets(block *common.Block, blockPvtData util.PvtDataCollections) (rwsetByKeys, error) {
+func computeOwnedRWsets(block *cached.Block, blockPvtData util.PvtDataCollections) (rwsetByKeys, error) {
 	lastBlockSeq := len(block.Data.Data) - 1
 
 	ownedRWsets := make(map[rwSetKey][]byte)
@@ -549,27 +549,21 @@ func (k *rwSetKey) toTxPvtReadWriteSet(rws []byte) *rwset.TxPvtReadWriteSet {
 }
 
 type txns []string
-type blockData [][]byte
-type blockConsumer func(seqInBlock uint64, chdr *common.ChannelHeader, txRWSet *rwsetutil.TxRwSet, endorsers []*peer.Endorsement) error
+type blockData []*cached.Envelope
+type blockConsumer func(seqInBlock uint64, chdr *common.ChannelHeader, txRWSet *cached.TxRwSet, endorsers []*peer.Endorsement) error
 
 func (data blockData) forEachTxn(txsFilter txValidationFlags, consumer blockConsumer) (txns, error) {
 	var txList []string
-	for seqInBlock, envBytes := range data {
-		env, err := utils.GetEnvelopeFromBlock(envBytes)
+	for seqInBlock, env := range data {
+		payload, err := env.UnmarshalPayload()
 		if err != nil {
 			logger.Warning("Invalid envelope:", err)
 			continue
 		}
 
-		payload, err := utils.GetPayload(env)
+		chdr, err := payload.Header.UnmarshalChannelHeader()
 		if err != nil {
 			logger.Warning("Invalid payload:", err)
-			continue
-		}
-
-		chdr, err := utils.UnmarshalChannelHeader(payload.Header.ChannelHeader)
-		if err != nil {
-			logger.Warning("Invalid channel header:", err)
 			continue
 		}
 
@@ -584,35 +578,41 @@ func (data blockData) forEachTxn(txsFilter txValidationFlags, consumer blockCons
 			continue
 		}
 
-		respPayload, err := utils.GetActionFromEnvelope(envBytes)
+		tx, err := payload.UnmarshalTransaction()
 		if err != nil {
 			logger.Warning("Failed obtaining action from envelope", err)
 			continue
 		}
 
-		tx, err := utils.GetTransaction(payload.Data)
+		actPl, err := tx.Actions[0].UnmarshalChaincodeActionPayload()
 		if err != nil {
 			logger.Warning("Invalid transaction in payload data for tx ", chdr.TxId, ":", err)
 			continue
 		}
 
-		ccActionPayload, err := utils.GetChaincodeActionPayload(tx.Actions[0].Payload)
-		if err != nil {
-			logger.Warning("Invalid chaincode action in payload for tx", chdr.TxId, ":", err)
-			continue
-		}
-
-		if ccActionPayload.Action == nil {
+		if actPl.Action == nil {
 			logger.Warning("Action in ChaincodeActionPayload for", chdr.TxId, "is nil")
 			continue
 		}
 
-		txRWSet := &rwsetutil.TxRwSet{}
-		if err = txRWSet.FromProtoBytes(respPayload.Results); err != nil {
+		propRespPl, err := actPl.Action.UnmarshalProposalResponsePayload()
+		if err != nil {
+			logger.Warning("Failed obtaining action from envelope", err)
+			continue
+		}
+
+		act, err := propRespPl.UnmarshalChaincodeAction()
+		if err != nil {
+			logger.Warning("Failed obtaining action from envelope", err)
+			continue
+		}
+
+		txRWSet, err := act.UnmarshalRwSet()
+		if err != nil {
 			logger.Warning("Failed obtaining TxRwSet from ChaincodeAction's results", err)
 			continue
 		}
-		err = consumer(uint64(seqInBlock), chdr, txRWSet, ccActionPayload.Action.Endorsements)
+		err = consumer(uint64(seqInBlock), chdr.ChannelHeader, txRWSet, actPl.Action.Endorsements)
 		if err != nil {
 			return txList, err
 		}
@@ -647,7 +647,7 @@ type privateDataInfo struct {
 }
 
 // listMissingPrivateData identifies missing private write sets and attempts to retrieve them from local transient store
-func (c *coordinator) listMissingPrivateData(block *common.Block, ownedRWsets map[rwSetKey][]byte) (*privateDataInfo, error) {
+func (c *coordinator) listMissingPrivateData(block *cached.Block, ownedRWsets map[rwSetKey][]byte) (*privateDataInfo, error) {
 	if block.Metadata == nil || len(block.Metadata.Metadata) <= int(common.BlockMetadataIndex_TRANSACTIONS_FILTER) {
 		return nil, errors.New("Block.Metadata is nil or Block.Metadata lacks a Tx filter bitmap")
 	}
@@ -659,7 +659,8 @@ func (c *coordinator) listMissingPrivateData(block *common.Block, ownedRWsets ma
 	sources := make(map[rwSetKey][]*peer.Endorsement)
 	privateRWsetsInBlock := make(map[rwSetKey]struct{})
 	missing := make(rwSetKeysByTxIDs)
-	data := blockData(block.Data.Data)
+	envs, _ := block.UnmarshalAllEnvelopes()
+	data := blockData(envs)
 	bi := &transactionInspector{
 		sources:              sources,
 		missingKeys:          missing,
@@ -712,7 +713,7 @@ type transactionInspector struct {
 	missingRWSButIneligible []rwSetKey
 }
 
-func (bi *transactionInspector) inspectTransaction(seqInBlock uint64, chdr *common.ChannelHeader, txRWSet *rwsetutil.TxRwSet, endorsers []*peer.Endorsement) error {
+func (bi *transactionInspector) inspectTransaction(seqInBlock uint64, chdr *common.ChannelHeader, txRWSet *cached.TxRwSet, endorsers []*peer.Endorsement) error {
 	for _, ns := range txRWSet.NsRwSets {
 		for _, hashedCollection := range ns.CollHashedRwSets {
 			if !containsWrites(chdr.TxId, ns.NameSpace, hashedCollection) {
@@ -843,8 +844,9 @@ func (c *coordinator) GetPvtDataAndBlockByNum(seqNum uint64, peerAuthInfo common
 	}
 
 	seqs2Namespaces := aggregatedCollections(make(map[seqAndDataModel]map[string][]*rwset.CollectionPvtReadWriteSet))
-	data := blockData(blockAndPvtData.Block.Data.Data)
-	data.forEachTxn(make(txValidationFlags, len(data)), func(seqInBlock uint64, chdr *common.ChannelHeader, txRWSet *rwsetutil.TxRwSet, _ []*peer.Endorsement) error {
+	envs, _ := blockAndPvtData.Block.UnmarshalAllEnvelopes()
+	data := blockData(envs)
+	data.forEachTxn(make(txValidationFlags, len(data)), func(seqInBlock uint64, chdr *common.ChannelHeader, txRWSet *cached.TxRwSet, _ []*peer.Endorsement) error {
 		item, exists := blockAndPvtData.PvtData[seqInBlock]
 		if !exists {
 			return nil
@@ -878,11 +880,11 @@ func (c *coordinator) GetPvtDataAndBlockByNum(seqNum uint64, peerAuthInfo common
 		return nil
 	})
 
-	return blockAndPvtData.Block, seqs2Namespaces.asPrivateData(), nil
+	return blockAndPvtData.Block.Block, seqs2Namespaces.asPrivateData(), nil
 }
 
 // containsWrites checks whether the given CollHashedRwSet contains writes
-func containsWrites(txID string, namespace string, colHashedRWSet *rwsetutil.CollHashedRwSet) bool {
+func containsWrites(txID string, namespace string, colHashedRWSet *cached.CollHashedRwSet) bool {
 	if colHashedRWSet.HashedRwSet == nil {
 		logger.Warningf("HashedRWSet of tx %s, namespace %s, collection %s is nil", txID, namespace, colHashedRWSet.CollectionName)
 		return false

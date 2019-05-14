@@ -2,12 +2,14 @@
 package mock
 
 import (
-	sync "sync"
+	"sync"
 
-	ledger "github.com/hyperledger/fabric/common/ledger"
+	fastfabric_extensions "github.com/hyperledger/fabric/fastfabric-extensions"
+
+	"github.com/hyperledger/fabric/common/ledger"
 	ledgera "github.com/hyperledger/fabric/core/ledger"
-	common "github.com/hyperledger/fabric/protos/common"
-	peer "github.com/hyperledger/fabric/protos/peer"
+	"github.com/hyperledger/fabric/protos/common"
+	"github.com/hyperledger/fabric/protos/peer"
 )
 
 type PeerLedger struct {
@@ -254,6 +256,10 @@ type PeerLedger struct {
 	}
 	invocations      map[string][][]interface{}
 	invocationsMutex sync.RWMutex
+}
+
+func (fake *PeerLedger) GetBlockstore() (store fastfabric_extensions.BlockStore) {
+	panic("implement me")
 }
 
 func (fake *PeerLedger) Close() {

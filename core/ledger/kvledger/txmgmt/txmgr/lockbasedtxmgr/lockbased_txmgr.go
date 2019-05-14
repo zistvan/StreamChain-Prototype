@@ -22,7 +22,7 @@ import (
 	"github.com/hyperledger/fabric/core/ledger/kvledger/txmgmt/version"
 	"github.com/hyperledger/fabric/core/ledger/pvtdatapolicy"
 	"github.com/hyperledger/fabric/core/ledger/util"
-	"github.com/hyperledger/fabric/protos/common"
+	"github.com/hyperledger/fabric/fastfabric-extensions/cached"
 	"github.com/hyperledger/fabric/protos/ledger/rwset"
 	"github.com/hyperledger/fabric/protos/ledger/rwset/kvrwset"
 )
@@ -44,7 +44,7 @@ type LockBasedTxMgr struct {
 }
 
 type current struct {
-	block     *common.Block
+	block     *cached.Block
 	batch     *privacyenabledstate.UpdateBatch
 	listeners []ledger.StateListener
 }

@@ -11,6 +11,7 @@ import (
 
 	"github.com/golang/protobuf/proto"
 	"github.com/hyperledger/fabric/core/ledger"
+	"github.com/hyperledger/fabric/fastfabric-extensions/cached"
 	"github.com/hyperledger/fabric/protos/common"
 	"github.com/stretchr/testify/assert"
 )
@@ -49,11 +50,12 @@ func (c *committer) cutBlockAndCommitExpectError(trans ...*txAndPvtdata) (*ledge
 }
 
 func (c *committer) copyOfBlockAndPvtdata(blk *ledger.BlockAndPvtData) *ledger.BlockAndPvtData {
-	blkBytes, err := proto.Marshal(blk.Block)
+	blkBytes, err := proto.Marshal(blk.Block.Block)
 	c.assert.NoError(err)
 	blkCopy := &common.Block{}
 	c.assert.NoError(proto.Unmarshal(blkBytes, blkCopy))
-	return &ledger.BlockAndPvtData{Block: blkCopy, PvtData: blk.PvtData,
+	bcopy := cached.GetBlock(blkCopy)
+	return &ledger.BlockAndPvtData{Block: bcopy, PvtData: blk.PvtData,
 		MissingPvtData: blk.MissingPvtData}
 }
 
@@ -91,6 +93,7 @@ func (g *blkGenerator) nextBlockAndPvtdata(trans ...*txAndPvtdata) *ledger.Block
 	g.lastNum++
 	g.lastHash = block.Header.Hash()
 	setBlockFlagsToValid(block)
-	return &ledger.BlockAndPvtData{Block: block, PvtData: blockPvtdata,
+	b := cached.GetBlock(block)
+	return &ledger.BlockAndPvtData{Block: b, PvtData: blockPvtdata,
 		MissingPvtData: make(ledger.TxMissingPvtDataMap)}
 }

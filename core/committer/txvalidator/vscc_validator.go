@@ -12,6 +12,8 @@ package txvalidator
 import (
 	"fmt"
 
+	"github.com/hyperledger/fabric/fastfabric-extensions/cached"
+
 	"github.com/golang/protobuf/proto"
 	"github.com/hyperledger/fabric/common/cauthdsl"
 	commonerrors "github.com/hyperledger/fabric/common/errors"
@@ -19,7 +21,6 @@ import (
 	"github.com/hyperledger/fabric/core/common/ccprovider"
 	"github.com/hyperledger/fabric/core/common/sysccprovider"
 	validation "github.com/hyperledger/fabric/core/handlers/validation/api"
-	"github.com/hyperledger/fabric/core/ledger/kvledger/txmgmt/rwsetutil"
 	"github.com/hyperledger/fabric/protos/common"
 	"github.com/hyperledger/fabric/protos/peer"
 	"github.com/hyperledger/fabric/protos/utils"
@@ -46,20 +47,20 @@ func newVSCCValidator(chainID string, support Support, sccp sysccprovider.System
 }
 
 // VSCCValidateTx executes vscc validation for transaction
-func (v *VsccValidatorImpl) VSCCValidateTx(seq int, payload *common.Payload, envBytes []byte, block *common.Block) (error, peer.TxValidationCode) {
+func (v *VsccValidatorImpl) VSCCValidateTx(seq int, payload *cached.Payload, envBytes []byte, block *cached.Block) (error, peer.TxValidationCode) {
 	chainID := v.chainID
 	logger.Debugf("[%s] VSCCValidateTx starts for bytes %p", chainID, envBytes)
 
-	// get header extensions so we have the chaincode ID
-	hdrExt, err := utils.GetChaincodeHeaderExtension(payload.Header)
-	if err != nil {
-		return err, peer.TxValidationCode_BAD_HEADER_EXTENSION
-	}
-
 	// get channel header
-	chdr, err := utils.UnmarshalChannelHeader(payload.Header.ChannelHeader)
+	chdr, err := payload.Header.UnmarshalChannelHeader()
 	if err != nil {
 		return err, peer.TxValidationCode_BAD_CHANNEL_HEADER
+	}
+
+	// get header extensions so we have the chaincode ID
+	hdrExt, err := chdr.UnmarshalExtension()
+	if err != nil {
+		return err, peer.TxValidationCode_BAD_HEADER_EXTENSION
 	}
 
 	/* obtain the list of namespaces we're writing stuff to;
@@ -69,12 +70,31 @@ func (v *VsccValidatorImpl) VSCCValidateTx(seq int, payload *common.Payload, env
 	3) does it write to any cc that cannot be invoked? */
 	writesToLSCC := false
 	writesToNonInvokableSCC := false
-	respPayload, err := utils.GetActionFromEnvelope(envBytes)
+	var ca *cached.ChaincodeAction
+	tx, err := payload.UnmarshalTransaction()
+	if err == nil {
+		if len(tx.Actions) == 0 {
+			err = errors.New("at least one TransactionAction required")
+		}
+
+		if err == nil {
+			cap, err := tx.Actions[0].UnmarshalChaincodeActionPayload()
+			if err == nil {
+				respPayload, err := cap.Action.UnmarshalProposalResponsePayload()
+				if err == nil {
+					ca, err = respPayload.UnmarshalChaincodeAction()
+				}
+			}
+		}
+	}
 	if err != nil {
 		return errors.WithMessage(err, "GetActionFromEnvelope failed"), peer.TxValidationCode_BAD_RESPONSE_PAYLOAD
 	}
-	txRWSet := &rwsetutil.TxRwSet{}
-	if err = txRWSet.FromProtoBytes(respPayload.Results); err != nil {
+	var txRWSet *cached.TxRwSet
+	if err == nil {
+		txRWSet, err = ca.UnmarshalRwSet()
+	}
+	if err != nil {
 		return errors.WithMessage(err, "txRWSet.FromProtoBytes failed"), peer.TxValidationCode_BAD_RWSET
 	}
 
@@ -83,13 +103,13 @@ func (v *VsccValidatorImpl) VSCCValidateTx(seq int, payload *common.Payload, env
 		return errors.New("nil ChaincodeId in header extension"), peer.TxValidationCode_INVALID_OTHER_REASON
 	}
 
-	if respPayload.ChaincodeId == nil {
+	if ca.ChaincodeId == nil {
 		return errors.New("nil ChaincodeId in ChaincodeAction"), peer.TxValidationCode_INVALID_OTHER_REASON
 	}
 
 	// get name and version of the cc we invoked
 	ccID := hdrExt.ChaincodeId.Name
-	ccVer := respPayload.ChaincodeId.Version
+	ccVer := ca.ChaincodeId.Version
 
 	// sanity check on ccID
 	if ccID == "" {
@@ -97,8 +117,8 @@ func (v *VsccValidatorImpl) VSCCValidateTx(seq int, payload *common.Payload, env
 		logger.Errorf("%+v", err)
 		return err, peer.TxValidationCode_INVALID_OTHER_REASON
 	}
-	if ccID != respPayload.ChaincodeId.Name {
-		err = errors.Errorf("inconsistent ccid info (%s/%s)", ccID, respPayload.ChaincodeId.Name)
+	if ccID != ca.ChaincodeId.Name {
+		err = errors.Errorf("inconsistent ccid info (%s/%s)", ccID, ca.ChaincodeId.Name)
 		logger.Errorf("%+v", err)
 		return err, peer.TxValidationCode_INVALID_OTHER_REASON
 	}
@@ -113,9 +133,9 @@ func (v *VsccValidatorImpl) VSCCValidateTx(seq int, payload *common.Payload, env
 	alwaysEnforceOriginalNamespace := v.support.Capabilities().V1_2Validation()
 	if alwaysEnforceOriginalNamespace {
 		wrNamespace = append(wrNamespace, ccID)
-		if respPayload.Events != nil {
-			ccEvent := &peer.ChaincodeEvent{}
-			if err = proto.Unmarshal(respPayload.Events, ccEvent); err != nil {
+		if ca.Events != nil {
+			ccEvent, err := ca.UnmarshalEvents()
+			if err != nil {
 				return errors.Wrapf(err, "invalid chaincode event"), peer.TxValidationCode_INVALID_OTHER_REASON
 			}
 			if ccEvent.ChaincodeId != ccID {
@@ -179,7 +199,7 @@ func (v *VsccValidatorImpl) VSCCValidateTx(seq int, payload *common.Payload, env
 		// validate *EACH* read write set according to its chaincode's endorsement policy
 		for _, ns := range wrNamespace {
 			// Get latest chaincode version, vscc and validate policy
-			txcc, vscc, policy, err := v.GetInfoForValidate(chdr, ns)
+			txcc, vscc, policy, err := v.GetInfoForValidate(chdr.ChannelHeader, ns)
 			if err != nil {
 				logger.Errorf("GetInfoForValidate for txId = %s returned error: %+v", chdr.TxId, err)
 				return err, peer.TxValidationCode_INVALID_OTHER_REASON
@@ -198,7 +218,7 @@ func (v *VsccValidatorImpl) VSCCValidateTx(seq int, payload *common.Payload, env
 			ctx := &Context{
 				Seq:       seq,
 				Envelope:  envBytes,
-				Block:     block,
+				Block:     block.Block,
 				TxID:      chdr.TxId,
 				Channel:   chdr.ChannelId,
 				Namespace: ns,
@@ -225,7 +245,7 @@ func (v *VsccValidatorImpl) VSCCValidateTx(seq int, payload *common.Payload, env
 		}
 
 		// Get latest chaincode version, vscc and validate policy
-		_, vscc, policy, err := v.GetInfoForValidate(chdr, ccID)
+		_, vscc, policy, err := v.GetInfoForValidate(chdr.ChannelHeader, ccID)
 		if err != nil {
 			logger.Errorf("GetInfoForValidate for txId = %s returned error: %+v", chdr.TxId, err)
 			return err, peer.TxValidationCode_INVALID_OTHER_REASON
@@ -239,7 +259,7 @@ func (v *VsccValidatorImpl) VSCCValidateTx(seq int, payload *common.Payload, env
 		ctx := &Context{
 			Seq:       seq,
 			Envelope:  envBytes,
-			Block:     block,
+			Block:     block.Block,
 			TxID:      chdr.TxId,
 			Channel:   chdr.ChannelId,
 			Namespace: ccID,
@@ -269,7 +289,6 @@ func (v *VsccValidatorImpl) VSCCValidateTxForCC(ctx *Context) error {
 	if e, isExecutionError := err.(*validation.ExecutionFailureError); isExecutionError {
 		return &commonerrors.VSCCExecutionFailureError{Err: e}
 	}
-
 	// Else, treat it as an endorsement error.
 	return &commonerrors.VSCCEndorsementPolicyError{Err: err}
 }
@@ -359,7 +378,7 @@ func (v *VsccValidatorImpl) GetInfoForValidate(chdr *common.ChannelHeader, ccID 
 
 // txWritesToNamespace returns true if the supplied NsRwSet
 // performs a ledger write
-func (v *VsccValidatorImpl) txWritesToNamespace(ns *rwsetutil.NsRwSet) bool {
+func (v *VsccValidatorImpl) txWritesToNamespace(ns *cached.NsRwSet) bool {
 	// check for public writes first
 	if ns.KvRwSet != nil && len(ns.KvRwSet.Writes) > 0 {
 		return true

@@ -7,8 +7,9 @@ SPDX-License-Identifier: Apache-2.0
 package ledgerstorage
 
 import (
-	"os"
 	"sync"
+
+	"github.com/hyperledger/fabric/fastfabric-extensions/cached"
 
 	"github.com/hyperledger/fabric/common/flogging"
 	"github.com/hyperledger/fabric/common/ledger/blkstorage"
@@ -129,19 +130,14 @@ func (s *Store) CommitWithPvtData(blockAndPvtdata *ledger.BlockAndPvtData) error
 	} else {
 		logger.Debugf("Skipping writing block [%d] to pvt block store as the store height is [%d]", blockNum, pvtBlkStoreHt)
 	}
-	//start := time.Now()
-	strAddBlock := os.Getenv("STREAMCHAIN_ADDBLOCK")
 
-	if blockAndPvtdata.Block.Header.Number < 10 || strAddBlock == "" || strAddBlock == "true" {
-		if err := s.AddBlock(blockAndPvtdata.Block); err != nil { //ZSOLT: move this call up to the parallel part...
-			s.pvtdataStore.Rollback()
-			return err
-		}
-	}
-	//logger.Errorf("Block Add: %f", time.Since(start).Seconds()*1000)
-	if writtenToPvtStore {
-		err := s.pvtdataStore.Commit()
+	if err := s.AddBlock(blockAndPvtdata.Block); err != nil {
+		s.pvtdataStore.Rollback()
 		return err
+	}
+
+	if writtenToPvtStore {
+		return s.pvtdataStore.Commit()
 	}
 	return nil
 }
@@ -199,7 +195,7 @@ func (s *Store) GetPvtDataAndBlockByNum(blockNum uint64, filter ledger.PvtNsColl
 	if pvtdata, err = s.getPvtDataByNumWithoutLock(blockNum, filter); err != nil {
 		return nil, err
 	}
-	return &ledger.BlockAndPvtData{Block: block, PvtData: constructPvtdataMap(pvtdata)}, nil
+	return &ledger.BlockAndPvtData{Block: cached.GetBlock(block), PvtData: constructPvtdataMap(pvtdata)}, nil
 }
 
 // GetPvtDataByNum returns only the pvt data  corresponding to the given block number
