@@ -252,6 +252,7 @@ func (mgr *blockfileMgr) moveToNextFile() {
 }
 
 func (mgr *blockfileMgr) addBlock(block *cached.Block) error {
+
 	bcInfo := mgr.getBlockchainInfo()
 	if block.Header.Number != bcInfo.Height {
 		return errors.Errorf(
@@ -271,6 +272,7 @@ func (mgr *blockfileMgr) addBlock(block *cached.Block) error {
 		)
 	}
 	blockBytes, info, err := serializeBlock(block.Block)
+
 	if err != nil {
 		return errors.WithMessage(err, "error serializing block")
 	}
@@ -302,7 +304,6 @@ func (mgr *blockfileMgr) addBlock(block *cached.Block) error {
 		}
 		return errors.WithMessage(err, "error appending block to file")
 	}
-
 	//Update the checkpoint info with the results of adding the new block
 	currentCPInfo := mgr.cpInfo
 	newCPInfo := &checkpointInfo{
@@ -327,13 +328,11 @@ func (mgr *blockfileMgr) addBlock(block *cached.Block) error {
 		txOffset.loc.offset += len(blockBytesEncodedLen)
 	}
 	//save the index in the database
-	//start := time.Now()
 	if err = mgr.index.indexBlock(&blockIdxInfo{
 		blockNum: block.Header.Number, blockHash: blockHash,
 		flp: blockFLP, txOffsets: txOffsets, metadata: block.Metadata}); err != nil {
 		return err
 	}
-	//logger.Errorf("Indexing: %.2f", time.Since(start).Seconds()*1000)
 	//update the checkpoint info (for storage) and the blockchain info (for APIs) in the manager
 	mgr.updateCheckpoint(newCPInfo)
 	mgr.updateBlockchainInfo(blockHash, block)

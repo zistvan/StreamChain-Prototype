@@ -44,6 +44,8 @@ import (
 	"google.golang.org/grpc/grpclog"
 )
 
+var viperMutex = &sync.Mutex{}
+
 // checkSpec to see if chaincode resides within current package capture for language.
 func checkSpec(spec *pb.ChaincodeSpec) error {
 	// Don't allow nil value
@@ -210,9 +212,11 @@ func chaincodeInvokeOrQuery(cmd *cobra.Command, invoke bool, cf *ChaincodeCmdFac
 			if broadcastClient, ok := broadcastClientsMap[orderingEndpoint]; ok {
 				broadcastClients[i] = broadcastClient
 			} else {
+				viperMutex.Lock()
 				viper.Set("orderer.address", workloadEntry.orderingEndpoint)
 				viper.Set("orderer.tls.rootcert.file", workloadEntry.orderingCaFilePath)
 				broadcastClient, err = common.GetBroadcastClientFnc()
+				viperMutex.Unlock()
 
 				if err != nil {
 					res <- fmt.Errorf("Error getting broadcast client: %s", err)
@@ -570,7 +574,9 @@ func InitCmdFactory(cmdName string, isEndorserRequired, isOrdererRequired bool) 
 			}
 			logger.Infof("Retrieved channel (%s) orderer endpoint: %s", channelID, orderingEndpoints[0])
 			// override viper env
+			viperMutex.Lock()
 			viper.Set("orderer.address", orderingEndpoints[0])
+			viperMutex.Unlock()
 		}
 
 		broadcastClient, err = common.GetBroadcastClientFnc()

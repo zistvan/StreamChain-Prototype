@@ -8,13 +8,10 @@ package fsblkstorage
 
 import (
 	"os"
-	"sync"
 	"time"
 
 	"github.com/pkg/errors"
 )
-
-var lock = sync.RWMutex{}
 
 type batchedBlockfileWriter struct {
 	batch         int
@@ -39,7 +36,11 @@ func newBatchedBlockFileWriter(bfw *blockfileWriter, batch int) *batchedBlockfil
 }
 
 func (w *batchedBlockfileWriter) setBlockfileWriter(bfw *blockfileWriter) {
-	w.bfw.close()
+
+	if w.batch == 0 {
+		w.bfw.close()
+	}
+
 	w.currentLen = 0
 	w.bfw = bfw
 }
@@ -86,15 +87,20 @@ func (w *batchedBlockfileWriter) finalWrite() {
 	}
 }
 
-func (w *batchedBlockfileWriter) close() {
-	w.bfw.close()
+func (w *batchedBlockfileWriter) close() error {
+
+	if err := w.writeOut(true); err != nil {
+		return err
+	}
+
+	if err := w.bfw.close(); err != nil {
+		return err
+	}
+
+	return nil
 }
 
 func (w *batchedBlockfileWriter) writeOut(wait bool) error {
-
-	//lock.Lock()
-
-	//start := time.Now()
 
 	if wait {
 		go w.finalWrite()
@@ -110,6 +116,9 @@ func (w *batchedBlockfileWriter) writeOut(wait bool) error {
 
 		if lastFile != nil && lastFile.Name() != v.file.Name() {
 			if err = lastFile.Sync(); err != nil {
+				return err
+			}
+			if err := lastFile.Close(); err != nil {
 				return err
 			}
 		}
@@ -129,11 +138,7 @@ func (w *batchedBlockfileWriter) writeOut(wait bool) error {
 		}
 	}
 
-	//logger.Errorf("wr,%d,%d,%.2f\n", time.Now().UnixNano(), len(w.buffer), time.Since(start).Seconds()*1000)
-
 	w.buffer = w.buffer[:0]
-
-	//lock.Unlock()
 
 	return nil
 }
@@ -149,6 +154,10 @@ func (w *batchedBlockfileWriter) truncateFile(targetSize int) error {
 		left := w.currentLen - targetSize
 		lastBuf = lastBuf[:(len(lastBuf) - left)]
 		w.currentLen = targetSize
+	}
+
+	if err := w.writeOut(false); err != nil {
+		return err
 	}
 
 	return nil
@@ -197,6 +206,7 @@ func (w *blockfileWriter) open() error {
 }
 
 func (w *blockfileWriter) close() error {
+
 	return errors.WithStack(w.file.Close())
 }
 

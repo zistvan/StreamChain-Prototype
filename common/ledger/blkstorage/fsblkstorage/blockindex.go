@@ -234,7 +234,6 @@ func (index *blockIndex) writeOut(data map[string][]byte) error {
 	if err := index.db.WriteBatch(&leveldbhelper.UpdateBatch{KVs: data}, true); err != nil {
 		return err
 	}
-
 	return nil
 }
 
