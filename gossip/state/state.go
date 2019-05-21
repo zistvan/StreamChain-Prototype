@@ -620,16 +620,26 @@ type PipelineData struct {
 	seq             uint64
 }
 
-func (s *GossipStateProviderImpl) commitPayloads(chans []chan *PipelineData, maxOutstanding int) {
+func (s *GossipStateProviderImpl) updateLedgerHeight(cIn chan *PipelineData) {
+
+	for {
+		job := <-cIn
+		s.mediator.UpdateLedgerHeight(job.block.Header.Number+1, common2.ChainID(s.chainID))
+	}
+}
+
+func (s *GossipStateProviderImpl) commitPayloads(cIn []chan *PipelineData, cOut chan *PipelineData, maxOutstanding int) {
 	seq := int(0)
 	for {
-		job := <-chans[seq]
+		job := <-cIn[seq]
 		seq++
 		if seq == maxOutstanding {
 			seq = 0
 		}
-		//logger.Errorf("SC: store ", job.seq)
+
 		s.ledger.StoreBlock(job.block, job.privateDataSets)
+
+		cOut <- job
 	}
 }
 
@@ -665,18 +675,19 @@ func (s *GossipStateProviderImpl) deliverPayloads() {
 		MaxNumOutstanding, _ = strconv.Atoi(strPipeline)
 	}
 
-	var inChans []chan *PipelineData
-	var outChans []chan *PipelineData
-	inChans = make([]chan *PipelineData, MaxNumOutstanding)
-	outChans = make([]chan *PipelineData, MaxNumOutstanding)
+	inChans := make([]chan *PipelineData, MaxNumOutstanding)
+	intChans := make([]chan *PipelineData, MaxNumOutstanding)
+	outChans := make(chan *PipelineData, MaxNumOutstanding)
 
 	if pipeline {
 		for seq := 0; seq < MaxNumOutstanding; seq++ {
 			inChans[seq] = make(chan *PipelineData)
-			outChans[seq] = make(chan *PipelineData)
-			go s.verifyPayloads(inChans[seq], outChans[seq])
+			intChans[seq] = make(chan *PipelineData)
+
+			go s.verifyPayloads(inChans[seq], intChans[seq])
 		}
-		go s.commitPayloads(outChans, MaxNumOutstanding)
+		go s.commitPayloads(intChans, outChans, MaxNumOutstanding)
+		go s.updateLedgerHeight(outChans)
 	}
 
 	for {
@@ -707,7 +718,6 @@ func (s *GossipStateProviderImpl) deliverPayloads() {
 						continue
 					}
 				}
-
 				job := &PipelineData{cached.GetBlock(rawBlock), p, payload.SeqNum}
 
 				if pipeline {
