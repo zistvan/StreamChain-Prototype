@@ -14,6 +14,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/hyperledger/fabric/core/ledger/kvledger/txmgmt/validator/statebasedval"
+
 	"github.com/hyperledger/fabric/fastfabric-extensions/cached"
 
 	pb "github.com/golang/protobuf/proto"
@@ -625,6 +627,9 @@ func (s *GossipStateProviderImpl) updateLedgerHeight(cIn chan *PipelineData) {
 	for {
 		job := <-cIn
 		s.mediator.UpdateLedgerHeight(job.block.Header.Number+1, common2.ChainID(s.chainID))
+		if statebasedval.GetCount() >= 20002 {
+			statebasedval.PrintRate()
+		}
 	}
 }
 
@@ -694,6 +699,7 @@ func (s *GossipStateProviderImpl) deliverPayloads() {
 		select {
 		// Wait for notification that next seq has arrived
 		case <-s.payloads.Ready():
+
 			logger.Debugf("[%s] Ready to transfer payloads (blocks) to the ledger, next block number is = [%d]", s.chainID, s.payloads.Next())
 			// Collect all subsequent payloads
 			for payload := s.payloads.Pop(); payload != nil; payload = s.payloads.Pop() {

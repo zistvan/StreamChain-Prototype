@@ -131,6 +131,16 @@ func parseWorkload(cmd *cobra.Command) ([]*WorkloadEntry, error) {
 		input := &pb.ChaincodeInput{}
 		text := scanner.Text()
 		fields := strings.Fields(text)
+
+		err := json.Unmarshal([]byte(fields[3]), &input)
+		if err != nil {
+			logger.Errorf("error decoding sakura response: %v", err)
+			if e, ok := err.(*json.SyntaxError); ok {
+				logger.Errorf("syntax error at byte offset %d", e.Offset)
+			}
+			logger.Errorf("sakura response: %q", []byte(fields[3]))
+		}
+
 		if err := json.Unmarshal([]byte(fields[3]), &input); err != nil {
 			return nil, fmt.Errorf("Chaincode argument error: %s", err)
 		}
